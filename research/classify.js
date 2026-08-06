@@ -265,6 +265,20 @@ function classify(paneText, agent, opts = {}) {
 
   // --- read-only verbs (tier 0) --------------------------------------------
   if (READ_VERBS.has(verb)) {
+    // Dangerous flags turn otherwise-read verbs into mutations (Sola r3 #1):
+    //   find . -delete / -exec rm … +   rg --pre 'touch PWNED' needle .
+    const DANGEROUS_FLAGS = [
+      ['find', ['-delete', '-exec', '-ok', '-execdir', '-okdir']],
+      ['rg', ['--pre', '--execute']],
+    ];
+    for (const [v, flags] of DANGEROUS_FLAGS) {
+      if (verb === v) {
+        const hit = flags.filter((f) => argv.includes(f));
+        if (hit.length) {
+          return { tier: 2, action: 'dangerous_option', reason: `${v} ${hit.join(' ')} is destructive`, argv, targets: [], rule: 'dangerous_flags' };
+        }
+      }
+    }
     const pathToks = argv.slice(1).filter(looksLikePath);
     if (pathToks.length === 0) {
       return { tier: 2, action: 'read', reason: 'read verb with no explicit path; cwd unverified',

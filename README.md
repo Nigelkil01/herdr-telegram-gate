@@ -75,7 +75,7 @@ The bot treats everything an agent shows it as untrusted. Concretely:
 
 - **Fail-closed** — parse failure, ambiguous commands, unknown verbs, symlinked paths, or any internal error → Tier 2 (ask the human). The default in `policy.json` is hardwired to escalate.
 - **TOCTOU revalidation** — between you tapping Approve and the bot pressing Enter, the pane is re-read and re-checked in 6 steps: agent still blocked, same session, same argv hash, same canonical target path. Anything changed → refuse.
-- **Anti-replay** — every approval has a random ID + SHA-256 action hash, is verified against `from.id`, chat ID, pending ID, and expiry on *every* callback, and is consumed atomically exactly once.
+- **Anti-replay** — every approval has a random opaque ID (SHA-256 action hash recorded for audit tracking). Every callback re-verifies `from.id`, chat ID, pending ID, and expiry, then consumes the pending atomically exactly once. The callback carries only the opaque pending ID — the server looks up what to approve; nothing executable travels in callback data.
 - **Redaction** — tokens, API keys, `Bearer` strings, and private keys are scrubbed from anything the bot displays or logs.
 - **Owner whitelist** — messages from any other Telegram user are ignored and logged.
 
@@ -135,7 +135,7 @@ No. It uses Telegram long polling outbound-only — works behind NAT with no ope
 | `bot.js` | The whole bot: Telegram polling + herdr waiters + policy engine |
 | `policy.json` | Risk-tier policy (versioned, audit-logged) |
 | `state.json` | Pending approvals (atomic write, survives restart) |
-| `audit.log` | Append-only decision log, JSON Lines |
+| `audit.log` | Append-only decision log, JSON Lines — **contains raw argv; treat as a sensitive internal log, don't share it** |
 | `research/` | Classifier, validation corpus, design notes |
 
 ## License

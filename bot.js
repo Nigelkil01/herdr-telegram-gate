@@ -750,13 +750,35 @@ async function handleBlocked(paneId) {
   addPending(record);
 
   // Auto-approve path (shadow mode OFF): Tier 0/1 auto-execute, no Telegram card.
-  // Re-get agent first: confirm it is STILL blocked before sending keys (TOCTOU).
+  // Full revalidation first: agent still blocked + session unchanged + argv hash
+  // unchanged + target unchanged (mirror of the manual approve path — Sola r3 #2).
   if (!SHADOW_MODE && result.tier <= 1) {
     try {
       const reCheck = await herdrAgentGet(paneId);
       if (!reCheck || reCheck.agent_status !== 'blocked') {
         audit('auto_skipped', 'system', record, { reason: `not_blocked:${reCheck?.agent_status || 'gone'}` });
         return;
+      }
+      if (JSON.stringify(reCheck.agent_session || null) !== JSON.stringify(record.agent_session || null)) {
+        audit('auto_skipped', 'system', record, { reason: 'session_changed' });
+        return;
+      }
+      const reText = await herdrAgentRead(paneId, 25);
+      const reRegion = extractApprovalRegion(reText, agentName);
+      const reRaw = classify(reRegion, agentName, { cwd, workspaceRoot: WORKSPACE_ROOT });
+      const reResult = applyPolicyRules(classifySafe(reRaw, cwd), reRaw.argv, cwd);
+      const oldHash = crypto.createHash('sha256').update(JSON.stringify(record.argv || [])).digest('hex').slice(0, 16);
+      const newHash = crypto.createHash('sha256').update(JSON.stringify(reResult.argv || [])).digest('hex').slice(0, 16);
+      if (oldHash !== newHash) {
+        audit('auto_skipped', 'system', record, { reason: 'argv_changed' });
+        return;
+      }
+      if (record.target_realpath) {
+        const reTarget = reResult.targets && reResult.targets[0] ? reResult.targets[0].canonical : null;
+        if (reTarget !== record.target_realpath) {
+          audit('auto_skipped', 'system', record, { reason: reTarget ? 'target_changed' : 'target_unresolvable' });
+          return;
+        }
       }
       await herdrAgentSendKeys(paneId, 'Enter');
       audit('auto_approved', 'system', record, { reason: `tier${result.tier} auto (shadow off)` });
@@ -947,13 +969,14 @@ async function executeCallback(cb, action) {
   // Step 5: re-resolve target, compare canonical path (Sola #1)
   if (rec.target_realpath) {
     const newTarget = newResult.targets && newResult.targets[0] ? newResult.targets[0].canonical : null;
-    if (newTarget && newTarget !== rec.target_realpath) {
-      await tgAnswerCallback(cb.id, '🛑 Target path changed (TOCTOU)');
-      audit('toctou_blocked', cb.from.id, { ...rec, reason: 'target_changed' });
+    // A null/ unresolvable re-target is also a mismatch — fail closed.
+    if (newTarget !== rec.target_realpath) {
+      await tgAnswerCallback(cb.id, '🛑 Target path changed or unresolvable (TOCTOU)');
+      audit('toctou_blocked', cb.from.id, { ...rec, reason: newTarget ? 'target_changed' : 'target_unresolvable' });
       if (chatId) await tgEditMessage(chatId, messageId,
-        `🛑 <b>Aborted (TOCTOU)</b>\n\nTarget path changed.\n` +
+        `🛑 <b>Aborted (TOCTOU)</b>\n\nTarget path changed or could not be re-resolved.\n` +
         `Was: <code>${escapeHtml(redactSecrets(rec.target_realpath))}</code>\n` +
-        `Now: <code>${escapeHtml(redactSecrets(newTarget))}</code>`);
+        `Now: <code>${escapeHtml(redactSecrets(newTarget || '(unresolvable)'))}</code>`);
       return;
     }
   }
@@ -1242,7 +1265,7 @@ async function cmdPending() {
   }
   const lines = ['⏳ <b>Pending Approvals</b>\n'];
   for (const r of pending) {
-    const cmd = r.argv ? r.argv.join(' ') : '?';
+    const cmd = redactSecrets(truncateMiddle(r.argv ? r.argv.join(' ') : '?', 120));
     const remaining = Math.max(0, Math.round((new Date(r.expires_at) - new Date()) / 1000));
     lines.push(`🔴 <b>${escapeHtml(r.agent)}</b> (<code>${r.pane_id}</code>)\n   <code>${escapeHtml(cmd)}</code>\n   Tier ${r.tier} · ${remaining}s left`);
   }
