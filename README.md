@@ -95,6 +95,14 @@ The policy is a single versioned JSON file (schema draft: `research/policy-schem
 
 ## From shadow to auto-approve
 
+> **Classifier validation status (read this before trusting auto-approve):** the risk
+> classifier scores 59/59 on its corpus with **0 unsafe→safer false negatives**, and
+> 2,758 property-based fuzz cases with 0 violations. However, the corpus is built from
+> **reconstructed prompt layouts plus 2 genuinely captured panes — none captured in a
+> live blocked state**. Extraction against real blocked panes is exactly what shadow
+> mode collects. Treat the 100% figure as a lower-bound statement, not a guarantee:
+> run shadow mode until the card you see matches the pane you're approving.
+
 1. Run in shadow mode (the default). Every block goes to Telegram; the classifier's opinion is logged alongside your decision.
 2. After enough data, diff the classifier's tiers against your actual approvals in `audit.log`. The KPI that matters: **unsafe→safer false negatives must be 0** (the classifier must never auto-approve something you would have rejected).
 3. Only then set `"shadow_mode": false` in `config.json` (copy `config.example.json` first). Tier 0/1 start auto-approving; Tier 2 and `manual` rules still come to you.
