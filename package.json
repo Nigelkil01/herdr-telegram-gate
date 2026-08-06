@@ -1,0 +1,14 @@
+{
+  "name": "herdr-telegram-gate",
+  "version": "0.1.0",
+  "description": "Telegram approval gate for herdr AI agent fleet",
+  "main": "bot.js",
+  "type": "commonjs",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node bot.js",
+    "doctor": "node bot.js --doctor",
+    "test": "node research/test_classify.js && node research/fuzz_classify.js"
+  },
+  "license": "MIT"
+}

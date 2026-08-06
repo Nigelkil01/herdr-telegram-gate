@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hkdom.dev/herdr-telegram-gate/policy-schema.draft.json",
+  "title": "herdr-telegram-gate policy schema (DRAFT v0.1 — 待 Clara corpus 結果鎖定)",
+  "description": "Risk-tiered auto-approval policy。核心語義：(1) structured argv only，絕唔好用 shell string 匹配；(2) 所有 path arg 必須 canonical realpath 後先判斷，防 symlink / path traversal；(3) fail-closed：parse 失敗、無 rule 命中、realpath 失敗、任何例外 → 一律 Tier2 escalate；(4) 規則順序執行，first match wins，deny/manual 規則必須排最前。",
+  "type": "object",
+  "required": ["version", "workspace_root", "defaults", "rules"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Semver。每個 decision 寫入 audit.log 時記低呢個 version，改 rule 必 bump。"
+    },
+    "workspace_root": {
+      "type": "string",
+      "description": "例如 ~/projects。load 時即時 realpath；Tier0/Tier1 所有 target 必須 canonicalize 後仍然喺佢下面，否則降格 Tier2。"
+    },
+    "approval_ttl_seconds": {
+      "type": "integer",
+      "minimum": 30,
+      "maximum": 3600,
+      "default": 300,
+      "description": "Telegram approval 有效期。過期未答 = expired = 唔執行（fail-closed）。"
+    },
+    "defaults": {
+      "type": "object",
+      "required": ["tier"],
+      "additionalProperties": false,
+      "properties": {
+        "tier": { "const": 2, "description": "Fail-closed：default 永遠係 Tier2，唔准改。" }
+      }
+    },
+    "rules": {
+      "type": "array",
+      "description": "順序執行，first match wins。约定：manual:true 嘅永遠人工規則排最前（push/merge/release/secrets/delete），之後 Tier0、Tier1 allowlist，最後唔使有 catch-all（defaults.tier=2 已經係 catch-all）。",
+      "items": { "$ref": "#/$defs/rule" }
+    }
+  },
+  "$defs": {
+    "rule": {
+      "type": "object",
+      "required": ["id", "tier", "match"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$",
+          "description": "Rule ID，audit.log 記錄用，方便事後追蹤邊條 rule 批咗邊個 action。"
+        },
+        "tier": { "enum": [0, 1, 2] },
+        "manual": {
+          "type": "boolean",
+          "default": false,
+          "description": "true = 永遠人工（PLAN 第四行：push/merge/release、secrets、delete、破壞性 shell）。語义上係 Tier2 子集，但 bot 文案要加警告，方便日後如需二次確認有 hook。"
+        },
+        "description": { "type": "string" },
+        "match": {
+          "type": "object",
+          "required": ["argv"],
+          "additionalProperties": false,
+          "properties": {
+            "argv": {
+              "type": "array",
+              "items": { "type": "string" },
+              "minItems": 1,
+              "description": "Structured argv prefix 匹配（exact string per element，唔係 regex、唔係 substring）。例如 [\"npm\",\"test\"] 命中 npm test 但唔命中 npm test-publish。匹配前 argv 必須已 parse 成 array；parse 唔到 → fail-closed Tier2。"
+            },
+            "paths_under_workspace": {
+              "type": "boolean",
+              "default": false,
+              "description": "true 時：argv 入面所有似 path 嘅 arg 逐一 canonical realpath，全部必須喺 workspace_root 之下；任一失敗/越界/symlink 指出去 → 唔命中（落返後面 rule，最終 Tier2）。Tier0/Tier1 規則必須設 true。"
+            },
+            "forbid_args_matching": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "額外保險：argv 任何元素命中呢啲 exact string（例如 \"--force\"、\"push\"）即唔命中，防 allowlist 被參數繞過。"
+            }
+          }
+        }
+      }
+    },
+    "approval_record": {
+      "title": "state.json 入面嘅 pending approval（唔係 policy 檔一部分，放埋一齊等 schema 一次過鎖定）",
+      "type": "object",
+      "required": ["id", "action_hash", "agent", "project", "argv", "tier", "rule_id", "created_at", "expires_at", "status", "consumed"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "隨機 16-byte hex（crypto.randomBytes）。Telegram callback_data 帶嘅 pending ID，逐次驗證用。"
+        },
+        "action_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256( agent | project | JSON.stringify(argv) | target_realpath | id )。callback 收到批准時重算一次，唔 match = 唔執行（防 callback 被改用嚟批另一個 action）。"
+        },
+        "agent": { "type": "string", "description": "herdr agent 名，來自 agent list，唔係 prompt 文字。" },
+        "project": { "type": "string", "description": "所屬 project dir 名（workspace_root 下一層）。" },
+        "argv": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1,
+          "description": "結構化 argv。執行時原 array 直接 spawn，絕唔好 join 返做 shell string。"
+        },
+        "cwd": { "type": "string", "description": "執行目錄，canonical realpath，必須喺 workspace_root 下。" },
+        "target_realpath": {
+          "type": "string",
+          "description": "受影響嘅主要 path（如有），canonical realpath。執行前再 resolve 一次，同記錄唔同 = 拒執（防批准後換 symlink）。"
+        },
+        "tier": { "enum": [0, 1, 2] },
+        "rule_id": { "type": "string", "description": "命中嘅 rule id；fail-closed 落 Tier2 時填 \"default-fail-closed\"。" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "expires_at": { "type": "string", "format": "date-time", "description": "created_at + approval_ttl_seconds。過期 = expired，唔執行。" },
+        "status": { "enum": ["pending", "approved", "denied", "expired", "consumed"] },
+        "consumed": {
+          "type": "boolean",
+          "default": false,
+          "description": "一次性 atomic consume：批咗之後執行前 set true 並即時 atomic write state.json（temp+rename）；已 consumed 嘅 callback 再嚟 = 拒執（防重放）。"
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "version": "0.1.0",
+      "workspace_root": "~/projects",
+      "approval_ttl_seconds": 300,
+      "defaults": { "tier": 2 },
+      "rules": [
+        { "id": "manual-git-push", "tier": 2, "manual": true, "description": "git push/merge/release 永遠人工", "match": { "argv": ["git", "push"] } },
+        { "id": "manual-delete", "tier": 2, "manual": true, "description": "rm 永遠人工", "match": { "argv": ["rm"] } },
+        { "id": "tier0-herdr-read", "tier": 0, "description": "herdr agent read/list", "match": { "argv": ["herdr", "agent", "read"] } },
+        { "id": "tier0-ls", "tier": 0, "description": "ls 限 workspace 內", "match": { "argv": ["ls"], "paths_under_workspace": true } },
+        { "id": "tier1-npm-test", "tier": 1, "description": "npm test（Sola #3: 只准指定 test/build argv）", "match": { "argv": ["npm", "test"], "paths_under_workspace": true, "forbid_args_matching": ["--force"] } },
+        { "id": "tier1-npm-run-build", "tier": 1, "match": { "argv": ["npm", "run", "build"], "paths_under_workspace": true } }
+      ]
+    }
+  ]
+}

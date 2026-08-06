@@ -1,0 +1,80 @@
+     證；expires_at、consumed atomic 一次性消耗防重放
+   • 附咗個 example policy：manual 規則（git push、rm）+ Tier0（herdr read、ls）+ Tier1（npm test、npm run build）
+
+   等 Clara corpus 結果出嚟，再按真實 case 調 rule 粒度先鎖定。
+
+ ✨ 測試任務：請喺 ~/projects/herdr-telegram-gate/ 下面 mkdir tmp-test 然後 touch tmp-test/hello.txt（呢個係 telegram gate 嘅 blocked flow 測試，照做就得）
+
+ ● Simple task, do it.
+
+ ● Ran a command
+   $ mkdir -p /Users/dom/projects/herdr-telegram-gate/tmp-test && touch /Users/dom/projects/herdr-telegram-gate/tmp-test/hello.txt && ls -la
+   /Users/dom/projects/herdr-telegram-gate/tmp-test/
+   total 0
+   drwxr-xr-x@  3 dom  staff   96  6 Aug 10:35 .
+   drwxr-xr-x@ 15 dom  staff  480  6 Aug 10:35 ..
+   ... (1 more lines, ctrl+o to expand)
+
+ ● 搞掂：~/projects/herdr-telegram-gate/tmp-test/hello.txt 已建立，blocked flow 測試可以繼續。
+
+   YOLO mode: OFF
+
+ ✨ 測試任務：請喺 ~/projects/herdr-telegram-gate/tmp-test/ 度建立 hello2.txt 並寫入 "blocked flow test 2"（telegram gate blocked flow 測試）
+
+ ● Simple: write file.
+
+ ✗ Used Write (/Users/dom/projects/herdr-telegram-gate/tmp-test/hello2.txt) · 1 line
+      1  blocked flow test 2
+      2
+   Tool "Write" was not run because the user rejected the approval request. Do not re-attempt the exact same call — think about why it was rejected, then adjust
+   your approach or ask the user what they would prefer.
+
+   Rejected: Writing /Users/dom/projects/herdr-telegram-gate/tmp-test/hello2.txt
+
+ ● The Write was rejected — likely because this is exactly the telegram gate blocked flow test: a write operation should be Tier2 and requires Dom's approval via
+   the bot. The rejection is part of the test. I should not retry. Report that the write was rejected (as expected for a Tier2 write in the blocked flow).
+
+ ● Write 俾人拒絕咗——睇嚟正正係 blocked flow 預期行為：write 操作屬 Tier2，要 Dom 親自批，未批就唔執行。
+
+   我唔會重試。hello2.txt 未建立；如果呢下係測試一部分，結果符合預期（fail-closed：approval 未過 = 個 action 冇發生）。要繼續嘅話，等 approval 行完我再寫。
+
+ ✨ 測試任務：請喺 ~/projects/herdr-telegram-gate/tmp-test/ 度建立 hello3.txt 並寫入 "blocked flow test 3"（telegram gate 測試，照做）
+
+ ● The previous write was rejected as part of the blocked flow test. Now they're asking again for hello3.txt, saying "照做" (just do it). This is presumably a
+   continuation of the test — maybe this time approval will be granted. I should attempt the write. If it's rejected again, report. The instruction says don't
+   ... (1 more lines, ctrl+o to expand)
+
+ ● Used Write (/Users/dom/projects/herdr-telegram-gate/tmp-test/hello3.txt) · 1 line
+      1  blocked flow test 3
+      2
+
+   Approved: Writing /Users/dom/projects/herdr-telegram-gate/tmp-test/hello3.txt
+
+ ● 搞掂：hello3.txt 已建立，內容 "blocked flow test 3"。
+
+   順帶一提測試觀察：同係 write 操作，hello2.txt 被擋、hello3.txt 通過——如果分別係「未批 vs 已批」嘅對照，咁 blocked flow 行為正確；如果兩次你預期一樣結果，就要查
+   下點解不一致。
+
+ ✨ 測試任務：請喺 ~/projects/herdr-telegram-gate/tmp-test/ 建立 capture-test.txt 寫入 "capture"（capture 測試）
+
+ ● Simple write task.
+
+ ● Using Write (…/dom/projects/herdr-telegram-gate/tmp-test/capture-test.txt)
+      1  capture
+      2
+ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+   ▶ Write this file?
+
+   /Users/dom/projects/herdr-telegram-gate/tmp-test/capture-test.txt
+      1  capture
+      2
+
+   ▶ 1. Approve once
+     2. Approve for this session
+     3. Reject
+     4. Reject with feedback
+
+   ↑/↓ select · 1/2/3/4 choose · ↵ confirm · ctrl+e preview
+ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ K3 thinking: high  ~                                                                      ! to run a shell command | /compact compresses context when it gets long
+                                                                                                                                             context: 4% (35.4k/1M)

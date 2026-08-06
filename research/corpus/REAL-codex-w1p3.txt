@@ -1,0 +1,80 @@
+  Nova = Grok 4.5
+  Gemma = Gemini 3.6 Flash
+  Iris = MiniMax M3
+  Clara = Claude Opus 5
+  Sola = Codex GPT 5.6 Sol
+  Gia = GLM
+  以後互相稱呼用呢啲名。收到請簡短確認你嘅名。
+
+
+• 收到，我嘅名係 Sola。
+
+
+› 【Diana 徵詢意見】關於 workspace directory 結構：而家成個 fleet 都喺 /Users/dom。計劃係開 project 嗰陣，成個 fleet 一齊搬去 project directory（例如 ~/xxx/
+  <project>）。問題：(1) root directory 你建議用咩？~ / ~/dev/ / ~/projects/ / 其他？(2) 除咗 per-project 分開，你覺得我哋有冇漏咗嘅考量？簡短答（3-5 行就夠）。
+
+
+• (1) 建議用 ~/projects/<project>：語意清楚、跨工具通用；~ 保持乾淨，~/dev 則略偏純開發。
+  (2) 每個 project 應有獨立 Git repo、環境與 secrets（.env 不入庫），並統一 README／AGENTS.md。
+  另要避免多個 agent 同時改同一檔案；用 branch/worktree 或清晰 ownership，並約定共享 artifacts、暫存檔及備份位置。
+
+
+› 【Diana 徵詢 - herdr-telegram-gate MVP plan】Dom 已確認開工，開工前要齊 team 共識。Context：目標係 Telegram 上面做到 (a) fleet 進度通知 (b) risk-tiered auto
+  approval (c) 重大事件搵 Dom 批。herdr 提供 agent list（status: idle/working/blocked/done）、agent wait --until blocked、agent read、agent prompt、agent send-
+  keys。底子用 hkdom/telegram-bot-skill（zero-dep Node.js，已有 whitelist/rate-limit/injection 防護）加 herdr socket 邏輯。我擬架構：bot.js（Telegram）+
+  monitor.js（poll agent list detect 狀態變化）+ policy.yaml（risk-tier）+ config.json。
+  問題：
+  1. 架構有冇遺漏或可以更簡潔？(Maker mindset，唔好 over-engineering)
+  2. Blocked detection：polling（每 5s check agent list）vs herdr agent wait --until blocked——邊個好？
+  3. Risk-tier policy 點定界先合理？auto-approve 邊界喺邊（read-only vs shell/network/git_push/delete）？
+  4. 分工建議：7 姊妹點分配？我初步諗：Gia 寫 bot+monitor、Ivy 研究 Hermes 設計+UX、Clara 架構 review、Sola 最終 review、Nova 查有冇 similar tool。
+  5. MVP 有咩應該斬走（YAGNI）？
+  簡短答（5-8 行），意見要具體。
+
+
+• 1. 架構可再簡化成單一 bot.js（Telegram + monitor + policy engine），另留 policy.json、config.json；加 append-only audit log、事件去重及 restart 後狀態恢復。
+  2. 用 hybrid：agent wait --until blocked 作即時主通道；低頻 polling（30–60 秒）只做補漏、重啟同步，唔建議每 5 秒全量輪詢。
+  3. Tier 0 自動：agent read/list、純 workspace 內 read-only；Tier 1 自動但記錄：tests/build、workspace 內可回復 edits；Tier 2 要 Dom 批：network、安裝依賴、寫出
+     workspace、send-keys／prompt。
+
+  4. 永遠人工批：push/merge/release、secrets/權限、對外訊息、刪除／覆寫、破壞性 shell；approval 要綁定 exact action、target、expiry，唔接受籠統批准。
+  5. 分工合理：Gia 主寫；Ivy 做 Telegram approval UX；Clara threat-model/架構；Nova 查同類；Gemma 測中文互動；Iris 做通知文案；Sola 做 policy、安全及最終整合
+     review。
+
+  6. MVP 斬走 YAML（避免 parser dependency）、dashboard、歷史分析、多 project／多 approver、自然語言 policy、複雜 retry；只做狀態變更通知、blocked 詳情、approve/
+     deny、audit。
+
+  7. 另設 fail-closed：policy 無匹配、資料不完整、bot 重啟或 approval 過期一律唔執行，並用 command/action ID 防重放。
+
+
+› 【Sola 最終 review - herdr-telegram-gate MVP plan v2（姊妹共識版）】Dom 要求你過目，你 OK 先開工。請逐點審批，有問題就指出，OK 就確認。
+
+  【架構】單一 bot.js（Telegram + monitor + policy engine 一個 event loop）+ policy.json（risk-tier，MVP 用 JSON 零 dependency，YAML 留 v2）+ state.json（pending
+  approvals，restart 唔丟）+ audit.log（append-only）+ .env（token）。
+  【Detection Hybrid】agent wait --until blocked 做即時 approval 主通道（每 agent 一條 waiter + timeout/retry）+ 30s 低頻 poll 做 done/idle 進度通知同補漏。
+  【3-tier fail-closed】Tier0 auto：read-only（agent read/list，限 ~/projects/** 內）；Tier1 auto+log：tests/build、可回復 edits；Tier2 問 Dom：write/shell/
+  network/git_push/寫出 workspace/send-keys；永遠人工：push/merge/release、secrets、delete、破壞性 shell。綁定 exact action+target+expiry，command ID 防重放。KPI：
+  misclassified-as-safer 必須 0。
+  【Callback】逐次 verify from.id，無匹配唔執行。
+  【先行驗證】Clara 砌 ~50 條真實 blocked prompt corpus，跑 classify 準確率，一日有結果，得先起 bot。
+  【分工】Clara=classify.js+corpus；Gia=bot.js+herdr socket；Ivy=policy schema+approval UX；Nova=similar tool scan+查 herdr-remote policy 功能；Sola=你=policy
+  schema+安全+最終 review；Gemma/Iris 後備。
+  【YAGNI 斬】blind judge、multi-user、DB、rich UI、parallel dispatch、token spend、cross-machine config、working 狀態 push（改為 done/blocked push + /status 主動
+  查）。
+  請回覆：APPROVE / APPROVE WITH CHANGES / REJECT，如有意見列點。
+
+
+• APPROVE WITH CHANGES
+
+  - 【架構】OK；state.json 要 atomic write（temp + rename），audit.log 記 decision、actor、policy version、action hash；.env 設最小權限。
+  - 【Detection】OK；waiter 要 exponential backoff、事件去重，poll 重啟後先 reconciliation，避免重覆通知／執行。
+  - 【Policy】需消除矛盾：Tier1「edits」同 Tier2「write」重疊。建議 Tier1 只准指定 test/build argv allowlist；任何 edit/write MVP 一律 Tier2。
+  - 唔好靠 prompt 文字分類後直接執行 shell；approval 必須綁定結構化 argv、canonical realpath target、agent/project、expiry，並防 symlink/path traversal。
+  - 【Callback】OK；除 from.id，亦驗證 chat ID、pending ID、action hash、未過期及未消耗，採一次性 atomic consume。
+  - 【先行驗證】OK，但 KPI 要獨立量度 unsafe→safer false negatives，必須 0；無法分類及 corpus 外案例一律 Tier2。
+  - 【分工／YAGNI】OK；Clara 與 Ivy 先鎖定 schema，Gia 只按 schema 實作，最後交我做 adversarial policy + restart/replay review。
+
+
+› Write tests for @filename
+
+  gpt-5.6-sol medium · ~

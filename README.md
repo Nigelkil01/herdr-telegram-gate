@@ -1,0 +1,134 @@
+# herdr-telegram-gate
+
+A Telegram approval gate for your [herdr](https://herdr.dev) AI agent fleet — one zero-dependency Node.js process that watches your agents, classifies what they're asking to do by risk, and puts every consequential decision in your Telegram inbox.
+
+## Features
+
+- **Shadow mode** — the risk classifier runs silently alongside a human-approves-everything flow, logging what it *would* have decided vs. what you actually approved. Collect real data before trusting automation.
+- **Risk-tiered auto-approval** — a versioned `policy.json` sorts every action into Tier 0 (read-only, auto), Tier 1 (allowlisted test/build commands, auto + log), or Tier 2 (everything else → ask you). Fail-closed by design: anything unparseable escalates.
+- **Approval inbox** — blocked agents show up as Telegram cards with **✅ Approve / ❌ Deny** inline buttons. Approving sends `Enter` to the agent's pane; denying sends `esc`. Pending approvals survive restarts.
+
+## Do you have herdr yet?
+
+**No** → install herdr first: see [herdr.dev](https://herdr.dev) or the [herdr GitHub repo](https://github.com/herdrdev/herdr). Come back when `herdr agent list` works.
+
+**Yes** → you're ready. This bot sits next to herdr and talks to it through the `herdr` CLI.
+
+## Prerequisites
+
+- Node.js >= 18 (no npm dependencies — `node bot.js` is the whole thing)
+- herdr installed (`~/.local/bin/herdr` or on `$PATH`) with its server running
+- A Telegram account
+
+## Telegram setup
+
+1. **Create the bot**: message [@BotFather](https://t.me/BotFather) → `/newbot` → follow the prompts → copy the token it gives you.
+2. **Get your user ID**: message [@userinfobot](https://t.me/userinfobot) — it replies with your numeric ID. This is the whitelist: only this ID can talk to the bot.
+3. Find your herdr socket path (usually `~/.config/herdr/herdr.sock`).
+
+## Install
+
+```bash
+git clone https://github.com/hkdom/herdr-telegram-gate.git
+cd herdr-telegram-gate
+
+cat > .env <<'EOF'
+TELEGRAM_BOT_TOKEN=<token from @BotFather>
+TELEGRAM_OWNER_ID=<your numeric user ID>
+HERDR_SOCKET_PATH=/Users/<you>/.config/herdr/herdr.sock
+EOF
+chmod 600 .env
+
+node bot.js
+```
+
+You should get a Telegram message from your bot saying it started, in shadow mode.
+
+## Usage
+
+| Command | What it does |
+|---------|--------------|
+| `/status` | Live status of every agent (idle / working / blocked / done) |
+| `/pending` | Approvals waiting on you, with time until expiry |
+| `/help` | Command list |
+
+When an agent blocks on a permission prompt, you get an **approval card**: who (agent + project), what (action + target path), why it's being asked (policy rule), and a countdown (approvals expire after 5 minutes by default). Tap **✅ Approve** or **❌ Deny**.
+
+Example card:
+
+```
+🔒 Approval Required [SHADOW]
+Agent: Ivy (w4:p2) · herdr-telegram-gate
+Command: write /Users/you/projects/.../capture-test.txt
+Target: /Users/you/projects/.../capture-test.txt
+Blast: 1 file
+🔴 T2 escalate · structured_write
+寫入 workspace 內檔案
+⏰ 4:32 · 🔑 a3f8b2c1
+
+[ ✅ Approve ] [ ❌ Deny ] [ 📄 Details ]
+```
+
+## Security model
+
+The bot treats everything an agent shows it as untrusted. Concretely:
+
+- **Fail-closed** — parse failure, ambiguous commands, unknown verbs, symlinked paths, or any internal error → Tier 2 (ask the human). The default in `policy.json` is hardwired to escalate.
+- **TOCTOU revalidation** — between you tapping Approve and the bot pressing Enter, the pane is re-read and re-checked in 6 steps: agent still blocked, same session, same argv hash, same canonical target path. Anything changed → refuse.
+- **Anti-replay** — every approval has a random ID + SHA-256 action hash, is verified against `from.id`, chat ID, pending ID, and expiry on *every* callback, and is consumed atomically exactly once.
+- **Redaction** — tokens, API keys, `Bearer` strings, and private keys are scrubbed from anything the bot displays or logs.
+- **Owner whitelist** — messages from any other Telegram user are ignored and logged.
+
+Shadow mode is the ultimate safety net: until you turn it off, the bot can approve *nothing* on its own.
+
+## policy.json
+
+The policy is a single versioned JSON file (schema draft: `research/policy-schema.draft.json`):
+
+- `defaults.tier` is `2` — unmatched actions escalate. Don't change this.
+- `rules` match in order, first match wins. Each rule matches a **structured argv prefix** (`["npm", "test"]` matches `npm test` but not `npm test-publish`), never shell strings or regexes.
+- **Rules are additive restrictions only**: they can escalate a decision (e.g. `manual: true`) but can never lower a tier already decided by the built-in classifier. The safety floor is hardcoded and non-disableable.
+- `paths_under_workspace: true` requires every path argument to canonicalize (realpath, no symlinks) under `workspace_root`, or the rule doesn't match.
+- Rules with `manual: true` (e.g. `git push`, `rm`) are always-human, even after shadow mode ends.
+- Every decision is written to `audit.log` with the policy version and matched rule ID. Bump `version` whenever you edit rules.
+
+## From shadow to auto-approve
+
+1. Run in shadow mode (the default). Every block goes to Telegram; the classifier's opinion is logged alongside your decision.
+2. After enough data, diff the classifier's tiers against your actual approvals in `audit.log`. The KPI that matters: **unsafe→safer false negatives must be 0** (the classifier must never auto-approve something you would have rejected).
+3. Only then set `"shadow_mode": false` in `config.json` (copy `config.example.json` first). Tier 0/1 start auto-approving; Tier 2 and `manual` rules still come to you.
+4. Keep watching `audit.log`. Tightening rules later is one edit + restart.
+
+## FAQ
+
+**The bot doesn't respond to my messages.**
+Check, in order: (a) `TELEGRAM_OWNER_ID` matches your numeric ID exactly — messages from anyone else are silently ignored; (b) only one instance is running (`409 Conflict` in `bot.log` means Telegram is refusing a second poller); (c) the token in `.env` has no whitespace or quotes.
+
+**No approval card appears when an agent blocks.**
+Confirm the bot sees herdr: `/status` should list your agents. If it's empty, check `HERDR_SOCKET_PATH` and that the herdr server is running. Also check `bot.log` for waiter retry loops.
+
+**The card says the command couldn't be extracted.**
+Expected in shadow mode — extraction is best-effort and anything unparseable simply escalates (fail-closed). The card shows what it could determine; you approve based on the pane state. If extraction fails *consistently* for one agent's prompt style, that's a parser gap — file an issue with a (redacted) pane sample.
+
+**I tapped Approve and it said "stale / changed".**
+That's the TOCTOU revalidation working: the pane changed between the card being sent and your tap. The bot refused rather than approve something you didn't see. Ask the agent again or check what it's doing now.
+
+**I restarted the bot and got duplicate cards.**
+On restart the bot reconciles `state.json` against live agent state and resends genuinely-pending approvals with the same IDs. Old cards are marked superseded; acting on either is safe (one-time consume).
+
+**Does it need a webhook / public URL?**
+No. It uses Telegram long polling outbound-only — works behind NAT with no open ports.
+
+## Files
+
+| File | Purpose |
+|------|---------|
+| `bot.js` | The whole bot: Telegram polling + herdr waiters + policy engine |
+| `policy.json` | Risk-tier policy (versioned, audit-logged) |
+| `state.json` | Pending approvals (atomic write, survives restart) |
+| `audit.log` | Append-only decision log, JSON Lines |
+| `research/` | Classifier, validation corpus, design notes |
+
+## License
+
+MIT — see [LICENSE](LICENSE).

@@ -1,0 +1,48 @@
+     state = "blocked"
+     priority = 900
+     region = "bottom_non_empty_lines(14)"
+     visible_blocker = true
+     any = [
+       { contains = ["dangerous"] },
+       { contains = ["approval"] },
+       { contains = ["allow once", "deny"] },
+       { line_regex = ['(?i)^\s*[▸>]?\s*1\.\s*allow'] },
+     ]
+     all = [
+       { any = [{ contains = ["enter confirm"] }, { contains = ["enter to confirm"] }, { contains = ["↑/↓ to select"] }, { contains = ["show full command"] }] },
+     ]
+     --
+     state = "blocked"
+     priority = 900
+     region = "bottom_non_empty_lines(14)"
+     visible_blocker = true
+     any = [
+       { contains = ["hermes needs your"] },
+       { line_regex = ['^\s*ask\s+\S'] },
+       { contains = ["type your answer"] },
+     ]
+     all = [
+       { any = [{ contains = ["enter confirm"] }, { contains = ["enter to confirm"] }, { contains = ["enter send"] }, { contains = ["press enter"] }, { contains =
+     ["↑/↓ select"] }, { contains = ["↑/↓ to select"] }, { contains = ["other (type"] }] },
+     ]
+
+● Formats differ substantially across agents — but herdr already handles detection. I need node to build and actually run this. Let me sort that out.
+
+● Bash(cd /tmp && (curl -fsSL --max-time 60 https://nodejs.org/dist/v22.14.0/node-v22.14.0-linux-x64.tar.xz -o node.tar.xz && echo "downloaded" && tar -xf
+  node.tar.xz && mkdir -p ~/.local/bin && cp node-v22.14.0-linux-x64/bin/node ~/.local/bin/node && ~/.local/bin/node --version) 2>&1 | tail -5)
+  ⎿  downloaded
+     v22.14.0
+  ⎿  Shell cwd was reset to /home/dom
+
+● Node v22 installed. Now building the deliverables — corpus first, with adversarial cases included since that's where false negatives actually live.
+
+● Bash(mkdir -p ~/projects/herdr-telegram-gate/research/corpus && cd ~/projects/herdr-telegram-gate/research && herdr agent read w1:p1 > corpus/REAL-claude-w1p1.txt
+  2>&1; herdr agent read w1:p3 > corpus/REAL-codex-w1p3.txt 2>&1; wc -l corpus/*.txt)
+
+* Levitating… (1m 37s · ↓ 5.8k tokens)
+  ⎿  Tip: Use /btw to ask a quick side question without interrupting Claude's current work
+                                                                                                                                                 ◐ medium · /effort
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Verify hostname on local Mac ──
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ accept edits on (shift+tab to cycle) · ← for agents · esc to interrupt
