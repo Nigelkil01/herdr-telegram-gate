@@ -31,9 +31,12 @@ const SECRET_PATTERNS = [
 /** Shell metacharacters that allow chaining, redirection or substitution. */
 const SHELL_META = /(\|\||&&|[;&|`]|\$\(|>>?|<|\$\{)/;
 
+// find / rg / tree are intentionally NOT in the read allowlist (Sola r4):
+// they carry mutation-capable options (-delete/-exec/-fprint, --pre, -o)
+// in too many forms to denylist safely, so any use escalates to T2.
 const READ_VERBS = new Set([
-  'cat', 'ls', 'head', 'tail', 'wc', 'grep', 'rg', 'find',
-  'file', 'stat', 'realpath', 'basename', 'dirname', 'tree',
+  'cat', 'ls', 'head', 'tail', 'wc', 'grep',
+  'file', 'stat', 'realpath', 'basename', 'dirname',
 ]);
 
 const GIT_READ_SUBCOMMANDS = new Set([

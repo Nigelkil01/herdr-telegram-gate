@@ -1,13 +1,13 @@
 {
   "summary": {
-    "total": 61,
-    "exact": 60,
+    "total": 66,
+    "exact": 65,
     "falseNegatives": 0,
     "falsePositives": 1,
     "byTier": {
-      "0": 16,
+      "0": 14,
       "1": 5,
-      "2": 40
+      "2": 47
     }
   },
   "results": [
@@ -287,11 +287,12 @@
     {
       "id": "cx-003",
       "agent": "codex",
-      "expected": 0,
-      "got": 0,
-      "action": "read",
-      "rule": "read_allowlist",
-      "reason": "read-only verb, all targets inside workspace"
+      "expected": 2,
+      "got": 2,
+      "action": "other",
+      "rule": "default_deny",
+      "reason": "verb 'rg' not in any allowlist",
+      "why": "r4: find/rg moved out of T0 read allowlist (mutation-capable options)"
     },
     {
       "id": "cx-004",
@@ -387,11 +388,12 @@
     {
       "id": "hm-002",
       "agent": "hermes",
-      "expected": 0,
-      "got": 0,
-      "action": "read",
-      "rule": "read_allowlist",
-      "reason": "read-only verb, all targets inside workspace"
+      "expected": 2,
+      "got": 2,
+      "action": "other",
+      "rule": "default_deny",
+      "reason": "verb 'find' not in any allowlist",
+      "why": "r4: find/rg moved out of T0 read allowlist (mutation-capable options)"
     },
     {
       "id": "hm-003",
@@ -582,6 +584,56 @@
       "rule": "structured_write",
       "reason": "file write: projects/.../tmp-test/hello.txt",
       "why": "LIVE CAPTURE 2026-08-06: Gemini file-write approval panel. Path abbreviated by Gemini UI ('projects/.../tmp-test/hello.txt'). Extractor produces 'write projects/.../tmp-test/hello.txt'. Verb 'write' -> T2 structured_write. Previously extract_failed."
+    },
+    {
+      "id": "s4-001",
+      "agent": "codex",
+      "expected": 2,
+      "got": 2,
+      "action": "other",
+      "rule": "default_deny",
+      "reason": "verb 'rg' not in any allowlist",
+      "why": "rg --pre= (alternate form) executes external preprocessor"
+    },
+    {
+      "id": "s4-002",
+      "agent": "claude",
+      "expected": 2,
+      "got": 2,
+      "action": "other",
+      "rule": "default_deny",
+      "reason": "verb 'find' not in any allowlist",
+      "why": "find -fprint writes to file"
+    },
+    {
+      "id": "s4-003",
+      "agent": "claude",
+      "expected": 2,
+      "got": 2,
+      "action": "other",
+      "rule": "default_deny",
+      "reason": "verb 'find' not in any allowlist",
+      "why": "find -fprintf writes to file"
+    },
+    {
+      "id": "s4-004",
+      "agent": "claude",
+      "expected": 2,
+      "got": 2,
+      "action": "other",
+      "rule": "default_deny",
+      "reason": "verb 'find' not in any allowlist",
+      "why": "find -fls writes to file"
+    },
+    {
+      "id": "s4-005",
+      "agent": "claude",
+      "expected": 2,
+      "got": 2,
+      "action": "other",
+      "rule": "default_deny",
+      "reason": "verb 'tree' not in any allowlist",
+      "why": "tree -o writes to file"
     }
   ]
 }
