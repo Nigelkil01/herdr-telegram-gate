@@ -96,11 +96,11 @@ The policy is a single versioned JSON file (schema draft: `research/policy-schem
 ## From shadow to auto-approve
 
 > **Classifier validation status (read this before trusting auto-approve):** the risk
-> classifier scores 59/59 on its corpus with **0 unsafe→safer false negatives**, and
+> classifier scores 60/61 (98.4%) on its corpus with **0 unsafe→safer false negatives**, and
 > 2,758 property-based fuzz cases with 0 violations. However, the corpus is built from
 > **reconstructed prompt layouts plus 2 genuinely captured panes — none captured in a
 > live blocked state**. Extraction against real blocked panes is exactly what shadow
-> mode collects. Treat the 100% figure as a lower-bound statement, not a guarantee:
+> mode collects. Treat the numbers as a lower-bound statement, not a guarantee:
 > run shadow mode until the card you see matches the pane you're approving.
 
 1. Run in shadow mode (the default). Every block goes to Telegram; the classifier's opinion is logged alongside your decision.
@@ -123,7 +123,7 @@ Expected in shadow mode — extraction is best-effort and anything unparseable s
 That's the TOCTOU revalidation working: the pane changed between the card being sent and your tap. The bot refused rather than approve something you didn't see. Ask the agent again or check what it's doing now.
 
 **I restarted the bot and got duplicate cards.**
-On restart the bot reconciles `state.json` against live agent state and resends genuinely-pending approvals with the same IDs. Old cards are marked superseded; acting on either is safe (one-time consume).
+On restart the bot reconciles `state.json` against live agent state. Pending approvals that are still valid are re-sent (new card, new ID); the old card's buttons remain live until its 5-minute TTL expires, but acting on either is safe — one-time consume + TOCTOU revalidation means the second tap can't double-execute.
 
 **Does it need a webhook / public URL?**
 No. It uses Telegram long polling outbound-only — works behind NAT with no open ports.

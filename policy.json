@@ -10,85 +10,22 @@
       "id": "manual-git-push",
       "tier": 2,
       "manual": true,
-      "description": "git push/merge/release 永遠人工",
+      "description": "git push/merge/release are always human-approved",
       "match": { "argv": ["git", "push"] }
     },
     {
       "id": "manual-git-merge",
       "tier": 2,
       "manual": true,
+      "description": "git merge is always human-approved",
       "match": { "argv": ["git", "merge"] }
     },
     {
       "id": "manual-rm",
       "tier": 2,
       "manual": true,
-      "description": "rm 永遠人工",
+      "description": "rm is always human-approved",
       "match": { "argv": ["rm"] }
-    },
-    {
-      "id": "tier0-herdr-read",
-      "tier": 0,
-      "description": "herdr agent read — fleet monitoring",
-      "match": { "argv": ["herdr", "agent", "read"] }
-    },
-    {
-      "id": "tier0-herdr-list",
-      "tier": 0,
-      "description": "herdr agent list — fleet monitoring",
-      "match": { "argv": ["herdr", "agent", "list"] }
-    },
-    {
-      "id": "tier0-ls",
-      "tier": 0,
-      "description": "ls 限 workspace 內",
-      "match": { "argv": ["ls"], "paths_under_workspace": true }
-    },
-    {
-      "id": "tier0-cat",
-      "tier": 0,
-      "match": { "argv": ["cat"], "paths_under_workspace": true }
-    },
-    {
-      "id": "tier0-grep",
-      "tier": 0,
-      "match": { "argv": ["grep"], "paths_under_workspace": true }
-    },
-    {
-      "id": "tier0-git-status",
-      "tier": 0,
-      "match": { "argv": ["git", "status"] }
-    },
-    {
-      "id": "tier0-git-diff",
-      "tier": 0,
-      "match": { "argv": ["git", "diff"] }
-    },
-    {
-      "id": "tier1-npm-test",
-      "tier": 1,
-      "description": "npm test（Sola #3: 只准指定 test/build argv）",
-      "match": {
-        "argv": ["npm", "test"],
-        "paths_under_workspace": true,
-        "forbid_args_matching": ["--force"]
-      }
-    },
-    {
-      "id": "tier1-npm-run-build",
-      "tier": 1,
-      "match": {
-        "argv": ["npm", "run", "build"],
-        "paths_under_workspace": true
-      }
-    },
-    {
-      "id": "tier1-pytest",
-      "tier": 1,
-      "match": {
-        "argv": ["pytest"],
-        "paths_under_workspace": true
-      }
     }
   ]
 }

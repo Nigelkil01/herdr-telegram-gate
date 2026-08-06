@@ -369,6 +369,20 @@ function consumePending(id) {
   return rec;
 }
 
+/**
+ * Re-open a consumed pending after a transient failure (agent get failed,
+ * re-classify threw) so the owner can retry the same approval. Genuine TOCTOU
+ * mismatches (not_blocked / session / argv / target changed) must NOT be
+ * un-consumed — the pane no longer matches what was approved.
+ */
+function unconsumePending(id) {
+  const rec = state.pending[id];
+  if (!rec || !rec.consumed) return;
+  rec.consumed = false;
+  rec.status = 'pending';
+  saveState();
+}
+
 // ─── classify safety wrapper (Sola review #2, #3, #4) ─────────────────────
 
 /**
@@ -464,6 +478,17 @@ function applyPolicyRules(result, argv, cwd) {
         rule: rule.id,
         manual: true,
         reason: rule.description || `manual rule: ${joined}`,
+      };
+    }
+    // Tier rules act as restrictions only: they may RAISE the tier decided by
+    // classify(), never lower it. A tier0 rule can't make cat auto-approve if
+    // the classifier decided T2 — it simply records intent for future tiers.
+    if (typeof rule.tier === 'number' && rule.tier > (result.tier || 0)) {
+      return {
+        ...result,
+        tier: rule.tier,
+        rule: rule.id,
+        reason: rule.description || `policy rule raised tier to T${rule.tier}`,
       };
     }
   }
@@ -864,6 +889,7 @@ async function executeCallback(cb, action) {
     agentInfo = await herdrAgentGet(rec.pane_id);
   } catch (e) {
     log(`revalidate(${rec.pane_id}): agent get failed: ${e.message}`);
+    unconsumePending(rec.id); // transient — let the owner retry
     await tgAnswerCallback(cb.id, '🛑 Cannot verify agent state');
     audit('toctou_blocked', cb.from.id, { ...rec, reason: 'agent_get_failed' });
     if (chatId) await tgEditMessage(chatId, messageId, `🛑 <b>Aborted</b>\n\nCannot re-verify agent state.`);
@@ -899,6 +925,7 @@ async function executeCallback(cb, action) {
     newResult = applyPolicyRules(newResult, newResult.argv, rec.cwd);
   } catch (e) {
     log(`revalidate(${rec.pane_id}): re-classify failed: ${e.message}`);
+    unconsumePending(rec.id); // transient — let the owner retry
     await tgAnswerCallback(cb.id, '🛑 Cannot re-verify command');
     audit('toctou_blocked', cb.from.id, { ...rec, reason: 'reclassify_failed' });
     if (chatId) await tgEditMessage(chatId, messageId, `🛑 <b>Aborted</b>\n\nCannot re-verify command.`);

@@ -11,9 +11,36 @@
 
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { classify } = require('./classify');
 
-const corpus = JSON.parse(fs.readFileSync(path.join(__dirname, 'corpus/corpus.json'), 'utf8'));
+// ---------------------------------------------------------------------------
+// Fixture tree: corpus paths use the neutral /home/user/projects/gate root.
+// The harness substitutes a real, resolvable fixture tree so realpath checks
+// work on any machine (and no machine username leaks into the public repo).
+// ---------------------------------------------------------------------------
+const FIXTURE_ROOT = path.join(os.homedir(), 'projects', 'gate-fixtures');
+function setupFixtures() {
+  const dirs = ['', 'src', 'research', 'node_modules', '.git'];
+  for (const d of dirs) fs.mkdirSync(path.join(FIXTURE_ROOT, d), { recursive: true });
+  const files = ['out.txt', 'a.txt', 'tmp.log', 'package.json', '.env', 'README.md', 'notes.md',
+    'src/index.js', 'src/policy.js', 'node_modules/x.js', '.git/HEAD'];
+  for (const f of files) {
+    const p = path.join(FIXTURE_ROOT, f);
+    if (!fs.existsSync(p)) fs.writeFileSync(p, '');
+  }
+  // symlink used by the escaping-symlink case (gate/link-to-secrets -> ~/.ssh)
+  const link = path.join(FIXTURE_ROOT, 'link-to-secrets');
+  if (!fs.existsSync(link)) {
+    try { fs.symlinkSync(path.join(os.homedir(), '.ssh'), link); } catch { /* noop */ }
+  }
+}
+setupFixtures();
+
+const NEUTRAL_ROOT = '/home/user/projects/gate';
+const rawCorpus = fs.readFileSync(path.join(__dirname, 'corpus/corpus.json'), 'utf8')
+  .split(NEUTRAL_ROOT).join(FIXTURE_ROOT);
+const corpus = JSON.parse(rawCorpus);
 const samples = corpus.samples;
 
 const results = [];
@@ -24,7 +51,7 @@ const falsePositives = [];   // predicted tier > expected tier  => noisy, accept
 for (const s of samples) {
   let r;
   try {
-    r = classify(s.text, s.agent, { cwd: s.cwd || '/home/dom/projects/gate' });
+    r = classify(s.text, s.agent, { cwd: s.cwd ? s.cwd.split(NEUTRAL_ROOT).join(FIXTURE_ROOT) : FIXTURE_ROOT });
   } catch (e) {
     r = { tier: 2, action: 'exception', reason: e.message, rule: 'threw' };
   }
@@ -73,7 +100,10 @@ if (falsePositives.length) {
 }
 
 // Adversarial subset is the part that actually matters.
-const adv = results.filter((r) => r.id.startsWith('adv-'));
+// Note: adv-011 / adv-015 are prose-injection cases whose TRUE label is T0
+// (prose must not influence classification) — only count adversarial cases
+// that genuinely must escalate to T2.
+const adv = results.filter((r) => r.id.startsWith('adv-') && r.expected === 2);
 const advCaught = adv.filter((r) => r.got === 2).length;
 console.log(`\n${line}`);
 console.log(`adversarial subset    : ${advCaught}/${adv.length} correctly escalated to T2`);
@@ -83,4 +113,7 @@ fs.writeFileSync(path.join(__dirname, 'results.json'),
   JSON.stringify({ summary: { total: samples.length, exact, falseNegatives: falseNegatives.length,
     falsePositives: falsePositives.length, byTier }, results }, null, 2));
 
-process.exit(falseNegatives.length === 0 ? 0 : 1);
+process.exit(
+  falseNegatives.length !== 0 ? 2          // unsafe misclassification: hard fail
+  : exact / samples.length < 0.90 ? 1     // accuracy regression (e.g. fixture paths broken)
+  : 0);
