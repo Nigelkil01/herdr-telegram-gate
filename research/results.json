@@ -1,13 +1,13 @@
 {
   "summary": {
-    "total": 66,
-    "exact": 65,
+    "total": 69,
+    "exact": 68,
     "falseNegatives": 0,
     "falsePositives": 1,
     "byTier": {
-      "0": 14,
+      "0": 11,
       "1": 5,
-      "2": 47
+      "2": 53
     }
   },
   "results": [
@@ -50,20 +50,22 @@
     {
       "id": "cl-005",
       "agent": "claude",
-      "expected": 0,
-      "got": 0,
-      "action": "read",
-      "rule": "git_read",
-      "reason": "git read-only in workspace"
+      "expected": 2,
+      "got": 2,
+      "action": "vcs_write",
+      "rule": "git_all_T2",
+      "reason": "git use escalates (mutation-capable options)",
+      "why": "r5: git moved to T2 (mutation-capable options)"
     },
     {
       "id": "cl-006",
       "agent": "claude",
-      "expected": 0,
-      "got": 0,
-      "action": "read",
-      "rule": "git_read",
-      "reason": "git read-only in workspace"
+      "expected": 2,
+      "got": 2,
+      "action": "vcs_write",
+      "rule": "git_all_T2",
+      "reason": "git use escalates (mutation-capable options)",
+      "why": "r5: git moved to T2 (mutation-capable options)"
     },
     {
       "id": "cl-007",
@@ -107,8 +109,8 @@
       "expected": 2,
       "got": 2,
       "action": "vcs_write",
-      "rule": "git_not_read",
-      "reason": "git subcommand 'push' not read-only"
+      "rule": "git_all_T2",
+      "reason": "git use escalates (mutation-capable options)"
     },
     {
       "id": "cl-012",
@@ -327,8 +329,8 @@
       "expected": 2,
       "got": 2,
       "action": "vcs_write",
-      "rule": "git_not_read",
-      "reason": "git subcommand 'commit' not read-only"
+      "rule": "git_all_T2",
+      "reason": "git use escalates (mutation-capable options)"
     },
     {
       "id": "cx-008",
@@ -480,11 +482,12 @@
     {
       "id": "gk-001",
       "agent": "grok",
-      "expected": 0,
-      "got": 0,
-      "action": "read",
-      "rule": "git_read",
-      "reason": "git read-only in workspace"
+      "expected": 2,
+      "got": 2,
+      "action": "vcs_write",
+      "rule": "git_all_T2",
+      "reason": "git use escalates (mutation-capable options)",
+      "why": "r5: git moved to T2 (mutation-capable options)"
     },
     {
       "id": "gk-002",
@@ -492,8 +495,8 @@
       "expected": 2,
       "got": 2,
       "action": "vcs_write",
-      "rule": "git_not_read",
-      "reason": "git subcommand 'reset' not read-only"
+      "rule": "git_all_T2",
+      "reason": "git use escalates (mutation-capable options)"
     },
     {
       "id": "junk-001",
@@ -634,6 +637,36 @@
       "rule": "default_deny",
       "reason": "verb 'tree' not in any allowlist",
       "why": "tree -o writes to file"
+    },
+    {
+      "id": "s5-001",
+      "agent": "claude",
+      "expected": 2,
+      "got": 2,
+      "action": "vcs_write",
+      "rule": "git_all_T2",
+      "reason": "git use escalates (mutation-capable options)",
+      "why": "git diff --no-index reads outside workspace"
+    },
+    {
+      "id": "s5-002",
+      "agent": "claude",
+      "expected": 2,
+      "got": 2,
+      "action": "vcs_write",
+      "rule": "git_all_T2",
+      "reason": "git use escalates (mutation-capable options)",
+      "why": "git diff --output= overwrites file"
+    },
+    {
+      "id": "s5-003",
+      "agent": "claude",
+      "expected": 2,
+      "got": 2,
+      "action": "other",
+      "rule": "default_deny",
+      "reason": "verb 'file' not in any allowlist",
+      "why": "file -C compiles, writes output"
     }
   ]
 }

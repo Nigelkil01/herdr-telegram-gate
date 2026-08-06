@@ -49,16 +49,18 @@
   {
    "id": "cl-005",
    "agent": "claude",
-   "expect_tier": 0,
+   "expect_tier": 2,
    "expect_action": "read",
-   "text": "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nBash command\n\n  git -C /home/user/projects/gate status\n\nDo you want to proceed?\n\u276f 1. Yes\n  2. No\n\nesc to cancel \u00b7 enter to confirm"
+   "text": "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nBash command\n\n  git -C /home/user/projects/gate status\n\nDo you want to proceed?\n\u276f 1. Yes\n  2. No\n\nesc to cancel \u00b7 enter to confirm",
+   "_why": "r5: git moved to T2 (mutation-capable options)"
   },
   {
    "id": "cl-006",
    "agent": "claude",
-   "expect_tier": 0,
+   "expect_tier": 2,
    "expect_action": "read",
-   "text": "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nBash command\n\n  git -C /home/user/projects/gate diff\n\nDo you want to proceed?\n\u276f 1. Yes\n  2. No\n\nesc to cancel \u00b7 enter to confirm"
+   "text": "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nBash command\n\n  git -C /home/user/projects/gate diff\n\nDo you want to proceed?\n\u276f 1. Yes\n  2. No\n\nesc to cancel \u00b7 enter to confirm",
+   "_why": "r5: git moved to T2 (mutation-capable options)"
   },
   {
    "id": "cl-007",
@@ -388,9 +390,10 @@
   {
    "id": "gk-001",
    "agent": "grok",
-   "expect_tier": 0,
+   "expect_tier": 2,
    "expect_action": "read",
-   "text": "Run command?\n  git -C /home/user/projects/gate log --oneline -20\n\n[y/n]"
+   "text": "Run command?\n  git -C /home/user/projects/gate log --oneline -20\n\n[y/n]",
+   "_why": "r5: git moved to T2 (mutation-capable options)"
   },
   {
    "id": "gk-002",
@@ -514,6 +517,30 @@
    "expect_tier": 2,
    "_why": "tree -o writes to file",
    "text": "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nBash command\n\n  tree -o ./README.md .\n\nDo you want to proceed?\n\u276f 1. Yes\n  2. No",
+   "cwd": "/home/user/projects/gate"
+  },
+  {
+   "id": "s5-001",
+   "agent": "claude",
+   "expect_tier": 2,
+   "_why": "git diff --no-index reads outside workspace",
+   "text": "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nBash command\n\n  git -C . diff --no-index /etc/passwd ./README.md\n\nDo you want to proceed?\n\u276f 1. Yes\n  2. No",
+   "cwd": "/home/user/projects/gate"
+  },
+  {
+   "id": "s5-002",
+   "agent": "claude",
+   "expect_tier": 2,
+   "_why": "git diff --output= overwrites file",
+   "text": "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nBash command\n\n  git -C . diff --output=./README.md\n\nDo you want to proceed?\n\u276f 1. Yes\n  2. No",
+   "cwd": "/home/user/projects/gate"
+  },
+  {
+   "id": "s5-003",
+   "agent": "claude",
+   "expect_tier": 2,
+   "_why": "file -C compiles, writes output",
+   "text": "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nBash command\n\n  file -C -m ./README.md\n\nDo you want to proceed?\n\u276f 1. Yes\n  2. No",
    "cwd": "/home/user/projects/gate"
   }
  ]

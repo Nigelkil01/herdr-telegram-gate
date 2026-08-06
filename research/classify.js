@@ -34,9 +34,10 @@ const SHELL_META = /(\|\||&&|[;&|`]|\$\(|>>?|<|\$\{)/;
 // find / rg / tree are intentionally NOT in the read allowlist (Sola r4):
 // they carry mutation-capable options (-delete/-exec/-fprint, --pre, -o)
 // in too many forms to denylist safely, so any use escalates to T2.
+// file is likewise option-rich (file -C compiles) — also T2 (Sola r5).
 const READ_VERBS = new Set([
   'cat', 'ls', 'head', 'tail', 'wc', 'grep',
-  'file', 'stat', 'realpath', 'basename', 'dirname',
+  'stat', 'realpath', 'basename', 'dirname',
 ]);
 
 const GIT_READ_SUBCOMMANDS = new Set([
@@ -231,25 +232,14 @@ function classify(paneText, agent, opts = {}) {
   const argv = toks.map((t) => t.value);
   const verb = path.basename(argv[0]);
 
-  // --- git: read-only subcommands only -------------------------------------
+  // --- git: REMOVED from T0 (Sola r5) --------------------------------------
+  // git carries mutation-capable options (diff --output=, diff --no-index,
+  // stash, submodule, worktree...) in too many forms to allowlist safely.
+  // Any git use escalates to T2; a per-command positive grammar can bring
+  // specific read-only subcommands back in a future release.
   if (verb === 'git') {
-    const sub = argv.find((a, i) => i > 0 && !a.startsWith('-') && a !== '-C' && argv[i - 1] !== '-C');
-    if (!sub || !GIT_READ_SUBCOMMANDS.has(sub)) {
-      return { tier: 2, action: 'vcs_write', reason: `git subcommand '${sub ?? '?'}' not read-only`,
-               argv, targets: [], rule: 'git_not_read' };
-    }
-    const ci = argv.indexOf('-C');
-    if (ci !== -1 && argv[ci + 1]) {
-      const r = resolveTarget(argv[ci + 1], cwd, wsRoot);
-      if (!r.ok) {
-        return { tier: 2, action: 'read_outside', reason: r.reason, argv,
-                 targets: [{ canonical: r.canonical }], rule: 'git_C_outside' };
-      }
-      return { tier: 0, action: 'read', reason: 'git read-only in workspace', argv,
-               targets: [{ canonical: r.canonical }], rule: 'git_read' };
-    }
-    return { tier: 2, action: 'vcs_read', reason: 'git without explicit -C; cwd unverified',
-             argv, targets: [], rule: 'git_no_C' };
+    return { tier: 2, action: 'vcs_write', reason: 'git use escalates (mutation-capable options)',
+             argv, targets: [], rule: 'git_all_T2' };
   }
 
   // --- test / build allowlist (tier 1) -------------------------------------
