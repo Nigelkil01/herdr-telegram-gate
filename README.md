@@ -66,7 +66,7 @@ Blast: 1 file
 寫入 workspace 內檔案
 ⏰ 4:32 · 🔑 a3f8b2c1
 
-[ ✅ Approve ] [ ❌ Deny ] [ 📄 Details ]
+[ ✅ Approve ] [ ❌ Deny ]
 ```
 
 ## Security model
@@ -88,6 +88,7 @@ The policy is a single versioned JSON file (schema draft: `research/policy-schem
 - `defaults.tier` is `2` — unmatched actions escalate. Don't change this.
 - `rules` match in order, first match wins. Each rule matches a **structured argv prefix** (`["npm", "test"]` matches `npm test` but not `npm test-publish`), never shell strings or regexes.
 - **Rules are additive restrictions only**: they can escalate a decision (e.g. `manual: true`) but can never lower a tier already decided by the built-in classifier. The safety floor is hardcoded and non-disableable.
+- Tier 0 auto-approve requires every path argument to resolve via `realpath` — if a path can't be resolved (e.g. missing file), the action escalates instead (fail-closed).
 - `paths_under_workspace: true` requires every path argument to canonicalize (realpath, no symlinks) under `workspace_root`, or the rule doesn't match.
 - Rules with `manual: true` (e.g. `git push`, `rm`) are always-human, even after shadow mode ends.
 - Every decision is written to `audit.log` with the policy version and matched rule ID. Bump `version` whenever you edit rules.

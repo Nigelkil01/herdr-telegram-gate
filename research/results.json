@@ -570,8 +570,8 @@
       "got": 2,
       "action": "file_write",
       "rule": "structured_write",
-      "reason": "file write: /Users/dom/projects/herdr-telegram-gate/tmp-test/capture-test.txt",
-      "why": "LIVE CAPTURE 2026-08-06: Kimi file-write approval panel. Extractor produces 'write /Users/dom/.../capture-test.txt'. Verb 'write' -> T2 structured_write. Previously extract_failed."
+      "reason": "file write: /home/user/projects/herdr-telegram-gate/tmp-test/capture-test.txt",
+      "why": "LIVE CAPTURE 2026-08-06: Kimi file-write approval panel. Extractor produces 'write /home/user/.../capture-test.txt'. Verb 'write' -> T2 structured_write. Previously extract_failed."
     },
     {
       "id": "gm-003",

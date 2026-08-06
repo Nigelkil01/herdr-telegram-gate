@@ -10,7 +10,7 @@
 • 收到，我嘅名係 Sola。
 
 
-› 【Diana 徵詢意見】關於 workspace directory 結構：而家成個 fleet 都喺 /Users/dom。計劃係開 project 嗰陣，成個 fleet 一齊搬去 project directory（例如 ~/xxx/
+› 【Diana 徵詢意見】關於 workspace directory 結構：而家成個 fleet 都喺 /home/user。計劃係開 project 嗰陣，成個 fleet 一齊搬去 project directory（例如 ~/xxx/
   <project>）。問題：(1) root directory 你建議用咩？~ / ~/dev/ / ~/projects/ / 其他？(2) 除咗 per-project 分開，你覺得我哋有冇漏咗嘅考量？簡短答（3-5 行就夠）。
 
 

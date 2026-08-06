@@ -724,6 +724,25 @@ async function handleBlocked(paneId) {
   };
   addPending(record);
 
+  // Auto-approve path (shadow mode OFF): Tier 0/1 auto-execute, no Telegram card.
+  // Re-get agent first: confirm it is STILL blocked before sending keys (TOCTOU).
+  if (!SHADOW_MODE && result.tier <= 1) {
+    try {
+      const reCheck = await herdrAgentGet(paneId);
+      if (!reCheck || reCheck.agent_status !== 'blocked') {
+        audit('auto_skipped', 'system', record, { reason: `not_blocked:${reCheck?.agent_status || 'gone'}` });
+        return;
+      }
+      await herdrAgentSendKeys(paneId, 'Enter');
+      audit('auto_approved', 'system', record, { reason: `tier${result.tier} auto (shadow off)` });
+      log(`handleBlocked(${paneId}): AUTO-APPROVED tier${result.tier} [${result.rule}]`);
+    } catch (e) {
+      log(`handleBlocked(${paneId}): auto-approve error: ${e.message}`);
+      audit('auto_error', 'system', record, { reason: e.message });
+    }
+    return;
+  }
+
   // Audit: escalated (shadow mode) — track "what owner saw" vs raw classification
   const rawCmd = result.argv ? result.argv.join(' ') : '(no command extracted)';
   audit('escalated', 'system', record, {

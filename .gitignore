@@ -6,3 +6,4 @@ config.json
 state.json
 *.tmp.*
 tmp-test/
+research/live-corpus/
