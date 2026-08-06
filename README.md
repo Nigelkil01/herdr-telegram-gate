@@ -96,7 +96,7 @@ The policy is a single versioned JSON file (schema draft: `research/policy-schem
 ## From shadow to auto-approve
 
 > **Classifier validation status (read this before trusting auto-approve):** the risk
-> classifier scores 60/61 (98.4%) on its corpus with **0 unsafe→safer false negatives**, and
+> classifier scores 68/69 (98.6%) on its corpus with **0 unsafe→safer false negatives**, and
 > 2,758 property-based fuzz cases with 0 violations. However, the corpus is built from
 > **reconstructed prompt layouts plus 2 genuinely captured panes — none captured in a
 > live blocked state**. Extraction against real blocked panes is exactly what shadow
