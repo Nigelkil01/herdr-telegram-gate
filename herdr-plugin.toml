@@ -1,0 +1,27 @@
+id = "telegram-gate"
+name = "Herdr Telegram Gate"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+description = "Telegram approval inbox + risk-tiered auto-approval for your herdr fleet — blocked agents surface as Telegram cards with Approve/Deny buttons"
+platforms = ["macos", "linux"]
+
+# Zero-dependency Node.js process — no build step required.
+# Install:  git clone + .env (token/owner id) + `node bot.js` (see README)
+
+[[actions]]
+id = "start"
+title = "Telegram Gate: start"
+description = "Start the gate daemon (background) — shadows agent blocks to Telegram"
+command = ["bash", "scripts/start.sh"]
+
+[[actions]]
+id = "status"
+title = "Telegram Gate: status"
+description = "Show gate daemon status and diagnostics (npm run doctor)"
+command = ["bash", "scripts/status.sh"]
+
+[[actions]]
+id = "stop"
+title = "Telegram Gate: stop"
+description = "Stop the gate daemon"
+command = ["bash", "scripts/stop.sh"]
