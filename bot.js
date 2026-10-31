@@ -35,6 +35,7 @@ const { execFile } = require('child_process');
 const ROOT = __dirname;
 const STATE_FILE = path.join(ROOT, 'state.json');
 const AUDIT_FILE = path.join(ROOT, 'audit.log');
+const VISUAL_FEEDBACK_FILE = path.join(ROOT, 'visual-feedback.jsonl');
 const POLICY_FILE = path.join(ROOT, 'policy.json');
 const CONFIG_FILE = path.join(ROOT, 'config.json');
 
@@ -195,7 +196,8 @@ async function herdrAgentList() {
  * control is v2 scope (see PLAN.md) — v1 watches local agents only.
  */
 function isMirrorPane(agent) {
-  return !!agent.display_agent;
+  // Board display labels do not identify mirror panes in the live service.
+  return false;
 }
 
 async function herdrAgentGet(paneId) {
@@ -204,7 +206,7 @@ async function herdrAgentGet(paneId) {
 }
 
 async function herdrAgentRead(paneId, lines = 20) {
-  return herdrText(['agent', 'read', paneId, '--source', 'recent-unwrapped', '--lines', String(lines)]);
+  return herdrText(['agent', 'read', paneId, '--source', 'visible']);
 }
 
 async function herdrAgentSendKeys(paneId, ...keys) {
@@ -337,7 +339,7 @@ function loadState() {
   const now = Date.now();
   let purged = 0;
   for (const [id, rec] of Object.entries(state.pending)) {
-    if (new Date(rec.expires_at).getTime() < now) {
+    if (rec.consumed || new Date(rec.expires_at).getTime() <= now) {
       delete state.pending[id];
       purged++;
     }
@@ -356,6 +358,20 @@ function addPending(record) {
 
 function getPending(id) {
   return state.pending[id] || null;
+}
+
+function removePending(id) {
+  if (state.pending[id]) {
+    delete state.pending[id];
+    saveState();
+  }
+}
+
+function removeStalePending(agents) {
+  const blocked = new Set(agents.filter(a => a.agent_status === 'blocked').map(a => a.pane_id));
+  for (const rec of Object.values(state.pending)) {
+    if (!rec.consumed && !blocked.has(rec.pane_id)) removePending(rec.id);
+  }
 }
 
 /** Atomically mark a pending record as consumed. Returns the record or null. */
@@ -404,6 +420,11 @@ function extractApprovalRegion(paneText, agent) {
   // MVP: return full pane text.
   // TODO(v2): parse herdr manifest region per agent.
   return paneText;
+}
+
+function requestScreen(text) {
+  const markers = [...text.matchAll(/^[ \t]*(?:Would you like to run the following command\?|Bash command)[ \t]*$/gm)];
+  return markers.length ? text.slice(markers[markers.length - 1].index).trim() : text.trim();
 }
 
 /**
@@ -642,8 +663,8 @@ function approvalMessage(record, status = 'pending') {
   const tierEmoji = { 0: '🟢', 1: '🟡', 2: '🔴' }[record.tier] ?? '⚪';
   const tierLabel = { 0: 'T0 auto', 1: 'T1 auto+log', 2: 'T2 escalate' }[record.tier] ?? `T${record.tier}`;
 
-  const rawCmd = record.argv ? record.argv.join(' ') : '(no command extracted)';
-  const cmd = escapeHtml(redactSecrets(truncateMiddle(rawCmd, 120)));
+  const rawCmd = record.screen || (record.argv ? record.argv.join(' ') : '(no command extracted; inspect the pane)');
+  const cmd = escapeHtml(redactSecrets(rawCmd.length > 2200 ? rawCmd.slice(0, 2200) + '\n[Screen truncated; inspect pane]' : rawCmd));
   const target = record.target_realpath ? escapeHtml(redactSecrets(record.target_realpath)) : null;
   const blast = blastRadius(record.target_realpath, record.rule);
   const reason = escapeHtml(redactSecrets(record.classify_reason || record.reason || ''));
@@ -653,7 +674,8 @@ function approvalMessage(record, status = 'pending') {
     '',
     `<b>Agent:</b> ${escapeHtml(agentDisplayName(record.agent))} (<code>${escapeHtml(record.pane_id)}</code>)` +
       (record.project ? ` · ${escapeHtml(record.project)}` : ''),
-    `<b>Command:</b> <code>${cmd}</code>`,
+    ...(record.task_id ? [`<b>Task:</b> ${escapeHtml(record.task_id)}`] : []),
+    `<b>Request:</b> <pre>${cmd}</pre>`,
   ];
 
   if (target) lines.push(`<b>Target:</b> <code>${target}</code>`);
@@ -698,7 +720,8 @@ async function handleBlocked(paneId) {
     return;
   }
 
-  const agentName = agent.display_agent || agent.agent || 'unknown';
+  const agentName = agent.agent || 'unknown';
+  const taskId = (agent.title || agent.terminal_title_stripped || '').match(/\b[A-Z][A-Z0-9]+-\d+\b/)?.[0] || null;
   const cwd = agent.cwd || WORKSPACE_ROOT;
   const project = projectFromCwd(cwd);
 
@@ -733,6 +756,9 @@ async function handleBlocked(paneId) {
     id,
     action_hash: hash,
     agent: agentName,
+    task_id: taskId,
+    screen: requestScreen(region),
+    screen_hash: region ? crypto.createHash('sha256').update(region).digest('hex') : null,
     pane_id: paneId,
     agent_session: agent.agent_session || null,
     project,
@@ -747,6 +773,9 @@ async function handleBlocked(paneId) {
     status: 'pending',
     consumed: false,
   };
+  for (const old of Object.values(state.pending)) {
+    if (old.pane_id === paneId && !old.consumed) removePending(old.id);
+  }
   addPending(record);
 
   // Auto-approve path (shadow mode OFF): Tier 0/1 auto-execute, no Telegram card.
@@ -782,6 +811,7 @@ async function handleBlocked(paneId) {
       }
       await herdrAgentSendKeys(paneId, 'Enter');
       audit('auto_approved', 'system', record, { reason: `tier${result.tier} auto (shadow off)` });
+      removePending(record.id);
       log(`handleBlocked(${paneId}): AUTO-APPROVED tier${result.tier} [${result.rule}]`);
     } catch (e) {
       log(`handleBlocked(${paneId}): auto-approve error: ${e.message}`);
@@ -866,6 +896,7 @@ async function executeCallback(cb, action) {
       verify.record.status = verify.reason === 'expired' ? 'expired' : 'rejected';
       saveState();
       audit(verify.reason, cb.from.id, verify.record);
+      removePending(verify.record.id);
     }
     return;
   }
@@ -880,117 +911,128 @@ async function executeCallback(cb, action) {
     return;
   }
 
-  if (action === 'deny') {
-    // Send Escape
+  try {
+    if (action === 'deny') {
+      // Send Escape
+      try {
+        await herdrAgentSendKeys(rec.pane_id, 'esc');
+        await tgAnswerCallback(cb.id, '🚫 Denied');
+        audit('denied', cb.from.id, rec, { executed: { keys: 'esc', pane_id: rec.pane_id } });
+        removePending(rec.id);
+        await tgEditMessage(cb.message.chat.id, cb.message.message_id, approvalMessage(rec, 'denied'));
+      } catch (e) {
+        log(`executeCallback deny error: ${e.message}`);
+        await tgAnswerCallback(cb.id, `❌ Error: ${e.message}`);
+        audit('exec_error', cb.from.id, rec);
+      }
+      return;
+    }
+
+    // action === 'approve' — FULL pane revalidation (Sola #1)
+    //   Step 1: re-get agent info
+    //   Step 2: verify still blocked
+    //   Step 3: verify agent/session identity unchanged
+    //   Step 4: re-read pane, re-classify, verify argv hash unchanged
+    //   Step 5: re-resolve target, compare canonical path
+    //   Step 6: execute send-keys
+    const chatId = cb.message?.chat?.id;
+    const messageId = cb.message?.message_id;
+
+    // Step 1: re-get agent info
+    let agentInfo;
     try {
-      await herdrAgentSendKeys(rec.pane_id, 'esc');
-      await tgAnswerCallback(cb.id, '🚫 Denied');
-      audit('denied', cb.from.id, rec, { executed: { keys: 'esc', pane_id: rec.pane_id } });
-      await tgEditMessage(cb.message.chat.id, cb.message.message_id, approvalMessage(rec, 'denied'));
+      agentInfo = await herdrAgentGet(rec.pane_id);
     } catch (e) {
-      log(`executeCallback deny error: ${e.message}`);
+      log(`revalidate(${rec.pane_id}): agent get failed: ${e.message}`);
+      unconsumePending(rec.id); // transient — let the owner retry
+      await tgAnswerCallback(cb.id, '🛑 Cannot verify agent state');
+      audit('toctou_blocked', cb.from.id, { ...rec, reason: 'agent_get_failed' });
+      if (chatId) await tgEditMessage(chatId, messageId, `🛑 <b>Aborted</b>\n\nCannot re-verify agent state.`);
+      return;
+    }
+
+    // Step 2: verify still blocked
+    if (!agentInfo || agentInfo.agent_status !== 'blocked') {
+      const status = agentInfo?.agent_status || 'gone';
+      await tgAnswerCallback(cb.id, `🛑 Agent no longer blocked (${status})`);
+      audit('toctou_blocked', cb.from.id, { ...rec, reason: `not_blocked:${status}` });
+      if (chatId) await tgEditMessage(chatId, messageId, `🛑 <b>Aborted</b>\n\nAgent is no longer blocked (status: ${escapeHtml(status)}).`);
+      return;
+    }
+
+    // Step 3: verify agent/session identity
+    const currentSession = JSON.stringify(agentInfo.agent_session || {});
+    const storedSession = JSON.stringify(rec.agent_session || {});
+    if (currentSession !== storedSession) {
+      await tgAnswerCallback(cb.id, '🛑 Agent session changed');
+      audit('toctou_blocked', cb.from.id, { ...rec, reason: 'session_changed' });
+      if (chatId) await tgEditMessage(chatId, messageId, `🛑 <b>Aborted</b>\n\nAgent session identity changed since request.`);
+      return;
+    }
+
+    // Step 4: re-read pane, re-classify, compare argv hash
+    let newResult;
+    try {
+      const newText = await herdrAgentRead(rec.pane_id, 25);
+      const newRegion = extractApprovalRegion(newText, rec.agent);
+      if (!rec.screen_hash || crypto.createHash('sha256').update(newRegion).digest('hex') !== rec.screen_hash) {
+        await tgAnswerCallback(cb.id, '🛑 Request changed or cannot be verified');
+        audit('toctou_blocked', cb.from.id, { ...rec, reason: 'screen_changed_or_missing' });
+        return;
+      }
+      const rawNew = classify(newRegion, rec.agent, { cwd: rec.cwd, workspaceRoot: WORKSPACE_ROOT });
+      newResult = classifySafe(rawNew, rec.cwd);
+      newResult = applyPolicyRules(newResult, newResult.argv, rec.cwd);
+    } catch (e) {
+      log(`revalidate(${rec.pane_id}): re-classify failed: ${e.message}`);
+      unconsumePending(rec.id); // transient — let the owner retry
+      await tgAnswerCallback(cb.id, '🛑 Cannot re-verify command');
+      audit('toctou_blocked', cb.from.id, { ...rec, reason: 'reclassify_failed' });
+      if (chatId) await tgEditMessage(chatId, messageId, `🛑 <b>Aborted</b>\n\nCannot re-verify command.`);
+      return;
+    }
+
+    const oldArgvHash = crypto.createHash('sha256').update(JSON.stringify(rec.argv || [])).digest('hex').slice(0, 16);
+    const newArgvHash = crypto.createHash('sha256').update(JSON.stringify(newResult.argv || [])).digest('hex').slice(0, 16);
+    if (oldArgvHash !== newArgvHash) {
+      await tgAnswerCallback(cb.id, '🛑 Command changed (TOCTOU)');
+      audit('toctou_blocked', cb.from.id, { ...rec, reason: 'argv_changed' });
+      if (chatId) await tgEditMessage(chatId, messageId,
+        `🛑 <b>Aborted (TOCTOU)</b>\n\nCommand changed between request and approval.\n\n` +
+        `Was: <code>${escapeHtml(redactSecrets((rec.argv || []).join(' ')))}</code>\n` +
+        `Now: <code>${escapeHtml(redactSecrets((newResult.argv || []).join(' ')))}</code>`);
+      return;
+    }
+
+    // Step 5: re-resolve target, compare canonical path (Sola #1)
+    if (rec.target_realpath) {
+      const newTarget = newResult.targets && newResult.targets[0] ? newResult.targets[0].canonical : null;
+      // A null/ unresolvable re-target is also a mismatch — fail closed.
+      if (newTarget !== rec.target_realpath) {
+        await tgAnswerCallback(cb.id, '🛑 Target path changed or unresolvable (TOCTOU)');
+        audit('toctou_blocked', cb.from.id, { ...rec, reason: newTarget ? 'target_changed' : 'target_unresolvable' });
+        if (chatId) await tgEditMessage(chatId, messageId,
+          `🛑 <b>Aborted (TOCTOU)</b>\n\nTarget path changed or could not be re-resolved.\n` +
+          `Was: <code>${escapeHtml(redactSecrets(rec.target_realpath))}</code>\n` +
+          `Now: <code>${escapeHtml(redactSecrets(newTarget || '(unresolvable)'))}</code>`);
+        return;
+      }
+    }
+
+    // Step 6: all checks passed — execute
+    try {
+      await herdrAgentSendKeys(rec.pane_id, 'Enter');
+      await tgAnswerCallback(cb.id, '✅ Approved');
+      audit('approved', cb.from.id, { ...rec, reason: 'executed' }, { executed: { keys: 'Enter', pane_id: rec.pane_id, target_verified: rec.target_realpath } });
+      removePending(rec.id);
+      if (chatId) await tgEditMessage(chatId, messageId, approvalMessage(rec, 'approved'));
+    } catch (e) {
+      log(`executeCallback approve error: ${e.message}`);
       await tgAnswerCallback(cb.id, `❌ Error: ${e.message}`);
       audit('exec_error', cb.from.id, rec);
     }
-    return;
-  }
-
-  // action === 'approve' — FULL pane revalidation (Sola #1)
-  //   Step 1: re-get agent info
-  //   Step 2: verify still blocked
-  //   Step 3: verify agent/session identity unchanged
-  //   Step 4: re-read pane, re-classify, verify argv hash unchanged
-  //   Step 5: re-resolve target, compare canonical path
-  //   Step 6: execute send-keys
-  const chatId = cb.message?.chat?.id;
-  const messageId = cb.message?.message_id;
-
-  // Step 1: re-get agent info
-  let agentInfo;
-  try {
-    agentInfo = await herdrAgentGet(rec.pane_id);
-  } catch (e) {
-    log(`revalidate(${rec.pane_id}): agent get failed: ${e.message}`);
-    unconsumePending(rec.id); // transient — let the owner retry
-    await tgAnswerCallback(cb.id, '🛑 Cannot verify agent state');
-    audit('toctou_blocked', cb.from.id, { ...rec, reason: 'agent_get_failed' });
-    if (chatId) await tgEditMessage(chatId, messageId, `🛑 <b>Aborted</b>\n\nCannot re-verify agent state.`);
-    return;
-  }
-
-  // Step 2: verify still blocked
-  if (!agentInfo || agentInfo.agent_status !== 'blocked') {
-    const status = agentInfo?.agent_status || 'gone';
-    await tgAnswerCallback(cb.id, `🛑 Agent no longer blocked (${status})`);
-    audit('toctou_blocked', cb.from.id, { ...rec, reason: `not_blocked:${status}` });
-    if (chatId) await tgEditMessage(chatId, messageId, `🛑 <b>Aborted</b>\n\nAgent is no longer blocked (status: ${escapeHtml(status)}).`);
-    return;
-  }
-
-  // Step 3: verify agent/session identity
-  const currentSession = JSON.stringify(agentInfo.agent_session || {});
-  const storedSession = JSON.stringify(rec.agent_session || {});
-  if (currentSession !== storedSession) {
-    await tgAnswerCallback(cb.id, '🛑 Agent session changed');
-    audit('toctou_blocked', cb.from.id, { ...rec, reason: 'session_changed' });
-    if (chatId) await tgEditMessage(chatId, messageId, `🛑 <b>Aborted</b>\n\nAgent session identity changed since request.`);
-    return;
-  }
-
-  // Step 4: re-read pane, re-classify, compare argv hash
-  let newResult;
-  try {
-    const newText = await herdrAgentRead(rec.pane_id, 25);
-    const newRegion = extractApprovalRegion(newText, rec.agent);
-    const rawNew = classify(newRegion, rec.agent, { cwd: rec.cwd, workspaceRoot: WORKSPACE_ROOT });
-    newResult = classifySafe(rawNew, rec.cwd);
-    newResult = applyPolicyRules(newResult, newResult.argv, rec.cwd);
-  } catch (e) {
-    log(`revalidate(${rec.pane_id}): re-classify failed: ${e.message}`);
-    unconsumePending(rec.id); // transient — let the owner retry
-    await tgAnswerCallback(cb.id, '🛑 Cannot re-verify command');
-    audit('toctou_blocked', cb.from.id, { ...rec, reason: 'reclassify_failed' });
-    if (chatId) await tgEditMessage(chatId, messageId, `🛑 <b>Aborted</b>\n\nCannot re-verify command.`);
-    return;
-  }
-
-  const oldArgvHash = crypto.createHash('sha256').update(JSON.stringify(rec.argv || [])).digest('hex').slice(0, 16);
-  const newArgvHash = crypto.createHash('sha256').update(JSON.stringify(newResult.argv || [])).digest('hex').slice(0, 16);
-  if (oldArgvHash !== newArgvHash) {
-    await tgAnswerCallback(cb.id, '🛑 Command changed (TOCTOU)');
-    audit('toctou_blocked', cb.from.id, { ...rec, reason: 'argv_changed' });
-    if (chatId) await tgEditMessage(chatId, messageId,
-      `🛑 <b>Aborted (TOCTOU)</b>\n\nCommand changed between request and approval.\n\n` +
-      `Was: <code>${escapeHtml(redactSecrets((rec.argv || []).join(' ')))}</code>\n` +
-      `Now: <code>${escapeHtml(redactSecrets((newResult.argv || []).join(' ')))}</code>`);
-    return;
-  }
-
-  // Step 5: re-resolve target, compare canonical path (Sola #1)
-  if (rec.target_realpath) {
-    const newTarget = newResult.targets && newResult.targets[0] ? newResult.targets[0].canonical : null;
-    // A null/ unresolvable re-target is also a mismatch — fail closed.
-    if (newTarget !== rec.target_realpath) {
-      await tgAnswerCallback(cb.id, '🛑 Target path changed or unresolvable (TOCTOU)');
-      audit('toctou_blocked', cb.from.id, { ...rec, reason: newTarget ? 'target_changed' : 'target_unresolvable' });
-      if (chatId) await tgEditMessage(chatId, messageId,
-        `🛑 <b>Aborted (TOCTOU)</b>\n\nTarget path changed or could not be re-resolved.\n` +
-        `Was: <code>${escapeHtml(redactSecrets(rec.target_realpath))}</code>\n` +
-        `Now: <code>${escapeHtml(redactSecrets(newTarget || '(unresolvable)'))}</code>`);
-      return;
-    }
-  }
-
-  // Step 6: all checks passed — execute
-  try {
-    await herdrAgentSendKeys(rec.pane_id, 'Enter');
-    await tgAnswerCallback(cb.id, '✅ Approved');
-    audit('approved', cb.from.id, { ...rec, reason: 'executed' }, { executed: { keys: 'Enter', pane_id: rec.pane_id, target_verified: rec.target_realpath } });
-    if (chatId) await tgEditMessage(chatId, messageId, approvalMessage(rec, 'approved'));
-  } catch (e) {
-    log(`executeCallback approve error: ${e.message}`);
-    await tgAnswerCallback(cb.id, `❌ Error: ${e.message}`);
-    audit('exec_error', cb.from.id, rec);
+  } finally {
+    if (getPending(rec.id)?.consumed) removePending(rec.id);
   }
 }
 
@@ -1072,6 +1114,7 @@ async function pollOnce() {
     return;
   }
   agents = agents.filter(a => !isMirrorPane(a));
+  removeStalePending(agents);
 
   const seen = new Set();
 
@@ -1129,6 +1172,7 @@ async function reconcile() {
     return [];
   }
   agents = agents.filter(a => !isMirrorPane(a));
+  removeStalePending(agents);
 
   const blockedAgents = [];
   for (const agent of agents) {
@@ -1205,12 +1249,43 @@ async function handleUpdate(update) {
 
 async function handleCallbackQuery(cb) {
   const data = cb.data || '';
-  if (data.startsWith('app:')) {
+  if (data === 'visual:approve' || data === 'visual:changes') {
+    await handleVisualCallback(cb);
+  } else if (data.startsWith('app:')) {
     await executeCallback(cb, 'approve');
   } else if (data.startsWith('den:')) {
     await executeCallback(cb, 'deny');
   } else {
     await tgAnswerCallback(cb.id, 'Unknown action');
+  }
+}
+
+async function handleVisualCallback(cb) {
+  if (String(cb.from?.id) !== String(OWNER_ID) || String(cb.message?.chat?.id) !== String(OWNER_ID)) {
+    await tgAnswerCallback(cb.id, 'Not authorized');
+    return;
+  }
+  const id = String(cb.message.message_id);
+  state.visual = state.visual || {};
+  if (state.visual[id]) {
+    await tgAnswerCallback(cb.id, 'Already recorded');
+    return;
+  }
+  const choice = cb.data === 'visual:approve' ? 'approve' : 'changes';
+  const entry = { message_id: id, caption: cb.message.caption || '', choice, time: ts() };
+  fs.appendFileSync(VISUAL_FEEDBACK_FILE, JSON.stringify(entry) + '\n');
+  state.visual[id] = entry;
+  saveState();
+  await tgAnswerCallback(cb.id, 'Recorded');
+  if (choice === 'changes') {
+    const prompt = await tgSendMessage('Please reply with one line of changes.', {
+      reply_to_message_id: cb.message.message_id,
+      reply_markup: { force_reply: true, selective: true },
+    });
+    if (prompt) {
+      entry.prompt_id = prompt.message_id;
+      saveState();
+    }
   }
 }
 
@@ -1221,6 +1296,19 @@ async function handleMessage(msg) {
 
   const text = (msg.text || '').trim();
   if (!text) return;
+  const visual = Object.values(state.visual || {}).find(v => v.prompt_id && v.prompt_id === msg.reply_to_message?.message_id && !v.replied);
+  if (visual) {
+    if (/\r|\n/.test(text)) {
+      await tgSendMessage('Please reply to the original prompt with one line.');
+      return;
+    }
+    const reply = text;
+    fs.appendFileSync(VISUAL_FEEDBACK_FILE, JSON.stringify({ message_id: visual.message_id, caption: visual.caption, choice: visual.choice, reply, time: ts() }) + '\n');
+    visual.replied = true;
+    saveState();
+    await tgSendMessage('Changes recorded.');
+    return;
+  }
 
   if (text === '/start' || text === '/help') {
     await tgSendMessage(
@@ -1280,9 +1368,7 @@ async function expiryLoop() {
     const now = Date.now();
     for (const rec of Object.values(state.pending)) {
       if (!rec.consumed && new Date(rec.expires_at).getTime() < now) {
-        rec.status = 'expired';
-        rec.consumed = true; // prevent future use
-        saveState();
+        removePending(rec.id);
         audit('expired', 'system', rec);
         log(`expired: ${rec.id} (${rec.agent}/${rec.pane_id})`);
       }

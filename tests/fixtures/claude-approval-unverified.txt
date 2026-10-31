@@ -1,0 +1,10 @@
+────────────
+Bash command
+
+  printf hello
+
+Do you want to proceed?
+❯ 1. Yes
+  2. No
+
+esc to cancel · enter to confirm
