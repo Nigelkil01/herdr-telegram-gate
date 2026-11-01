@@ -762,6 +762,7 @@ async function handleBlocked(paneId) {
     screen_hash: region ? crypto.createHash('sha256').update(requestScreen(region)).digest('hex') : null,
     pane_id: paneId,
     agent_session: agent.agent_session || null,
+    state_change_seq: seq,
     project,
     argv: result.argv,
     cwd,
@@ -913,23 +914,7 @@ async function executeCallback(cb, action) {
   }
 
   try {
-    if (action === 'deny') {
-      // Send Escape
-      try {
-        await herdrAgentSendKeys(rec.pane_id, 'esc');
-        await tgAnswerCallback(cb.id, '🚫 Denied');
-        audit('denied', cb.from.id, rec, { executed: { keys: 'esc', pane_id: rec.pane_id } });
-        removePending(rec.id);
-        await tgEditMessage(cb.message.chat.id, cb.message.message_id, approvalMessage(rec, 'denied'));
-      } catch (e) {
-        log(`executeCallback deny error: ${e.message}`);
-        await tgAnswerCallback(cb.id, `❌ Error: ${e.message}`);
-        audit('exec_error', cb.from.id, rec);
-      }
-      return;
-    }
-
-    // action === 'approve' — FULL pane revalidation (Sola #1)
+    // Both actions require pane revalidation before sending keys.
     //   Step 1: re-get agent info
     //   Step 2: verify still blocked
     //   Step 3: verify agent/session identity unchanged
@@ -964,7 +949,9 @@ async function executeCallback(cb, action) {
     // Step 3: verify agent/session identity
     const currentSession = JSON.stringify(agentInfo.agent_session || {});
     const storedSession = JSON.stringify(rec.agent_session || {});
-    if (currentSession !== storedSession) {
+    if (currentSession !== storedSession || agentInfo.agent !== rec.agent ||
+        rec.state_change_seq == null || agentInfo.state_change_seq !== rec.state_change_seq) {
+      delete lastSeq[rec.pane_id];
       await tgAnswerCallback(cb.id, '🛑 Agent session changed');
       audit('toctou_blocked', cb.from.id, { ...rec, reason: 'session_changed' });
       if (chatId) await tgEditMessage(chatId, messageId, `🛑 <b>Aborted</b>\n\nAgent session identity changed since request.`);
@@ -980,6 +967,20 @@ async function executeCallback(cb, action) {
         delete lastSeq[rec.pane_id];
         await tgAnswerCallback(cb.id, '🛑 Request changed or cannot be verified');
         audit('toctou_blocked', cb.from.id, { ...rec, reason: 'screen_changed_or_missing' });
+        return;
+      }
+      if (action === 'deny') {
+        try {
+          await herdrAgentSendKeys(rec.pane_id, 'esc');
+          await tgAnswerCallback(cb.id, '🚫 Denied');
+          audit('denied', cb.from.id, rec, { executed: { keys: 'esc', pane_id: rec.pane_id } });
+          removePending(rec.id);
+          await tgEditMessage(chatId, messageId, approvalMessage(rec, 'denied'));
+        } catch (e) {
+          log(`executeCallback deny error: ${e.message}`);
+          await tgAnswerCallback(cb.id, `❌ Error: ${e.message}`);
+          audit('exec_error', cb.from.id, rec);
+        }
         return;
       }
       const rawNew = classify(newRegion, rec.agent, { cwd: rec.cwd, workspaceRoot: WORKSPACE_ROOT });
