@@ -11,8 +11,8 @@ const source = fs.readFileSync(path.join(__dirname, '../bot.js'), 'utf8')
   .replace('const ROOT = __dirname;', `const ROOT = ${JSON.stringify(root)};`)
   .replace("const { classify } = require('./research/classify.js');", `const { classify } = require(${JSON.stringify(path.join(__dirname, '../research/classify.js'))});`)
   .replace(/main\(\)\.catch\(e => \{[\s\S]*?\}\);\s*$/, `
-    tgAnswerCallback = async () => {};
-    tgSendMessage = async () => ({message_id: 99});
+    tgAnswerCallback = async () => { if (globalThis.failAnswer) throw new Error('offline'); };
+    tgSendMessage = async () => globalThis.failSend ? null : ({message_id: 99});
     herdrAgentSendKeys = async () => { throw new Error('visual pressed keys'); };
     globalThis.api = {handleCallbackQuery, handleMessage};`);
 const proc = { ...process, env: { ...process.env, TELEGRAM_OWNER_ID: '123' } };
@@ -30,5 +30,19 @@ vm.runInNewContext(source, ctx);
   assert.equal(log[0].choice, 'changes');
   assert.equal(log[0].caption, 'HTRG-1 mockup');
   assert.equal(log[1].reply, 'Move the heading');
+  const second = {message_id: 43, chat: {id: 123}, caption: 'second'};
+  ctx.failSend = true;
+  await ctx.api.handleCallbackQuery({id:'c',from:{id:123},message:second,data:'visual:changes'});
+  ctx.failSend = false;
+  await ctx.api.handleCallbackQuery({id:'d',from:{id:123},message:second,data:'visual:changes'});
+  await ctx.api.handleMessage({from:{id:123},chat:{id:123},reply_to_message:{message_id:99},text:'Make it smaller'});
+  const third = {message_id: 44, chat: {id: 123}, caption: 'third'};
+  ctx.failAnswer = true;
+  await assert.rejects(ctx.api.handleCallbackQuery({id:'e',from:{id:123},message:third,data:'visual:changes'}));
+  ctx.failAnswer = false;
+  await ctx.api.handleMessage({from:{id:123},chat:{id:123},reply_to_message:{message_id:44},text:'Change color'});
+  const more = fs.readFileSync(path.join(root, 'visual-feedback.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+  assert(more.some(x => x.caption === 'second' && x.reply === 'Make it smaller'));
+  assert(more.some(x => x.caption === 'third' && x.reply === 'Change color'));
   console.log('visual feedback passed');
 })().catch(e => { console.error(e); process.exitCode = 1; });

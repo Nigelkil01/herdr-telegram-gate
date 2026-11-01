@@ -591,6 +591,7 @@ function redactSecrets(str) {
   return String(str)
     .replace(/sk-[a-zA-Z0-9_-]{8,}/g, 'sk-REDACTED')
     .replace(/(token|password|passwd|secret|api[_-]?key|auth)["'\s]*[:=]\s*["']?[^"'\s\n]{4,}/gi, '$1=REDACTED')
+    .replace(/-----BEGIN RSA PRIVATE KEY-----[\s\S]*?(?:-----END RSA PRIVATE KEY-----|$)/g, '-----REDACTED KEY-----')
     .replace(/-----BEGIN [A-Z ]+PRIVATE KEY-----[\s\S]*?-----END [A-Z ]+PRIVATE KEY-----/g, '-----REDACTED KEY-----')
     .replace(/Bearer\s+[a-zA-Z0-9._-]{8,}/gi, 'Bearer REDACTED');
 }
@@ -664,7 +665,8 @@ function approvalMessage(record, status = 'pending') {
   const tierLabel = { 0: 'T0 auto', 1: 'T1 auto+log', 2: 'T2 escalate' }[record.tier] ?? `T${record.tier}`;
 
   const rawCmd = record.screen || (record.argv ? record.argv.join(' ') : '(no command extracted; inspect the pane)');
-  const cmd = escapeHtml(redactSecrets(rawCmd.length > 2200 ? rawCmd.slice(0, 2200) + '\n[Screen truncated; inspect pane]' : rawCmd));
+  const safeCmd = redactSecrets(rawCmd);
+  const cmd = escapeHtml(safeCmd.length > 2200 ? '[Screen truncated; inspect pane]\n' + safeCmd.slice(-2200) : safeCmd);
   const target = record.target_realpath ? escapeHtml(redactSecrets(record.target_realpath)) : null;
   const blast = blastRadius(record.target_realpath, record.rule);
   const reason = escapeHtml(redactSecrets(record.classify_reason || record.reason || ''));
@@ -758,7 +760,7 @@ async function handleBlocked(paneId) {
     agent: agentName,
     task_id: taskId,
     screen: requestScreen(region),
-    screen_hash: region ? crypto.createHash('sha256').update(region).digest('hex') : null,
+    screen_hash: region ? crypto.createHash('sha256').update(requestScreen(region)).digest('hex') : null,
     pane_id: paneId,
     agent_session: agent.agent_session || null,
     project,
@@ -975,7 +977,8 @@ async function executeCallback(cb, action) {
     try {
       const newText = await herdrAgentRead(rec.pane_id, 25);
       const newRegion = extractApprovalRegion(newText, rec.agent);
-      if (!rec.screen_hash || crypto.createHash('sha256').update(newRegion).digest('hex') !== rec.screen_hash) {
+      if (!rec.screen_hash || crypto.createHash('sha256').update(requestScreen(newRegion)).digest('hex') !== rec.screen_hash) {
+        delete lastSeq[rec.pane_id];
         await tgAnswerCallback(cb.id, '🛑 Request changed or cannot be verified');
         audit('toctou_blocked', cb.from.id, { ...rec, reason: 'screen_changed_or_missing' });
         return;
@@ -1267,17 +1270,18 @@ async function handleVisualCallback(cb) {
   }
   const id = String(cb.message.message_id);
   state.visual = state.visual || {};
-  if (state.visual[id]) {
+  if (state.visual[id] && (state.visual[id].choice !== 'changes' || state.visual[id].prompt_id || state.visual[id].replied)) {
     await tgAnswerCallback(cb.id, 'Already recorded');
     return;
   }
   const choice = cb.data === 'visual:approve' ? 'approve' : 'changes';
-  const entry = { message_id: id, caption: cb.message.caption || '', choice, time: ts() };
-  fs.appendFileSync(VISUAL_FEEDBACK_FILE, JSON.stringify(entry) + '\n');
-  state.visual[id] = entry;
-  saveState();
-  await tgAnswerCallback(cb.id, 'Recorded');
-  if (choice === 'changes') {
+  const entry = state.visual[id] || { message_id: id, caption: cb.message.caption || '', choice, time: ts() };
+  if (!state.visual[id]) {
+    fs.appendFileSync(VISUAL_FEEDBACK_FILE, JSON.stringify(entry) + '\n');
+    state.visual[id] = entry;
+    saveState();
+  }
+  if (entry.choice === 'changes') {
     const prompt = await tgSendMessage('Please reply with one line of changes.', {
       reply_to_message_id: cb.message.message_id,
       reply_markup: { force_reply: true, selective: true },
@@ -1287,6 +1291,7 @@ async function handleVisualCallback(cb) {
       saveState();
     }
   }
+  await tgAnswerCallback(cb.id, 'Recorded');
 }
 
 async function handleMessage(msg) {
@@ -1296,7 +1301,7 @@ async function handleMessage(msg) {
 
   const text = (msg.text || '').trim();
   if (!text) return;
-  const visual = Object.values(state.visual || {}).find(v => v.prompt_id && v.prompt_id === msg.reply_to_message?.message_id && !v.replied);
+  const visual = Object.values(state.visual || {}).find(v => v.choice === 'changes' && !v.replied && (v.prompt_id === msg.reply_to_message?.message_id || Number(v.message_id) === msg.reply_to_message?.message_id));
   if (visual) {
     if (/\r|\n/.test(text)) {
       await tgSendMessage('Please reply to the original prompt with one line.');
