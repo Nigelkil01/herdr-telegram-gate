@@ -57,6 +57,18 @@ vm.runInNewContext(source, ctx);
   const secret = 'FAKEKEYBODY'.repeat(250);
   assert.doesNotMatch(card(`-----BEGIN RSA PRIVATE KEY-----\n${secret}\n-----END RSA PRIVATE KEY-----\n${question}`), /FAKEKEYBODY/);
   assert.doesNotMatch(card(`-----BEGIN RSA PRIVATE KEY-----\n${secret}`), /FAKEKEYBODY/);
+  for (const label of ['PRIVATE KEY', 'RSA PRIVATE KEY', 'EC PRIVATE KEY', 'OPENSSH PRIVATE KEY']) {
+    const complete = card(`-----BEGIN ${label}-----\n${secret}\n-----END ${label}-----\n${question}`);
+    assert.doesNotMatch(complete, /FAKEKEYBODY/, `${label}: complete key body is redacted`);
+    assert.match(complete, /Do you want to continue with this approach\?/, `${label}: question survives redaction`);
+    const command = 'Would you like to run the following command?\n$ ls /tmp';
+    const withCommand = card(`-----BEGIN ${label}-----\n${secret}\n-----END ${label}-----\n${command}`);
+    assert.doesNotMatch(withCommand, /FAKEKEYBODY/);
+    assert.match(withCommand, /\$ ls \/tmp/, `${label}: command survives redaction`);
+    const incomplete = card(`${question}\n-----BEGIN ${label}-----\n${secret}`);
+    assert.doesNotMatch(incomplete, /FAKEKEYBODY/, `${label}: unterminated key body is redacted`);
+    assert.match(incomplete, /Do you want to continue with this approach\?/, `${label}: preceding question survives redaction`);
+  }
   assert.match(card('older transcript\n'.repeat(300) + question), /Do you want to continue with this approach/);
   ctx.fixture = fixture;
   ctx.seq++;
