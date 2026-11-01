@@ -1301,7 +1301,8 @@ async function handleMessage(msg) {
 
   const text = (msg.text || '').trim();
   if (!text) return;
-  const visual = Object.values(state.visual || {}).find(v => v.choice === 'changes' && !v.replied && (v.prompt_id === msg.reply_to_message?.message_id || Number(v.message_id) === msg.reply_to_message?.message_id));
+  const replyTo = msg.reply_to_message?.message_id;
+  const visual = replyTo == null ? null : Object.values(state.visual || {}).find(v => v.choice === 'changes' && !v.replied && (v.prompt_id === replyTo || Number(v.message_id) === replyTo));
   if (visual) {
     if (/\r|\n/.test(text)) {
       await tgSendMessage('Please reply to the original prompt with one line.');

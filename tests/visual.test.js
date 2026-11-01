@@ -33,6 +33,8 @@ vm.runInNewContext(source, ctx);
   const second = {message_id: 43, chat: {id: 123}, caption: 'second'};
   ctx.failSend = true;
   await ctx.api.handleCallbackQuery({id:'c',from:{id:123},message:second,data:'visual:changes'});
+  await ctx.api.handleMessage({from:{id:123},chat:{id:123},text:'ordinary message'});
+  assert(!fs.readFileSync(path.join(root, 'visual-feedback.jsonl'), 'utf8').includes('ordinary message'));
   ctx.failSend = false;
   await ctx.api.handleCallbackQuery({id:'d',from:{id:123},message:second,data:'visual:changes'});
   await ctx.api.handleMessage({from:{id:123},chat:{id:123},reply_to_message:{message_id:99},text:'Make it smaller'});
