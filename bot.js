@@ -423,9 +423,7 @@ function extractApprovalRegion(paneText, agent) {
 }
 
 function requestScreen(text) {
-  const markers = [...text.matchAll(/^[ \t]*(?:Would you like to run the following command\?|Bash command)[ \t]*$/gm)];
-  if (markers.length) return text.slice(markers[markers.length - 1].index).trim();
-  return text.trim();
+  return text;
 }
 
 async function requestStillMatches(record) {

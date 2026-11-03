@@ -12,7 +12,7 @@ const source = fs.readFileSync(path.join(__dirname, '../bot.js'), 'utf8')
   .replace('const ROOT = __dirname;', `const ROOT = ${JSON.stringify(root)};`)
   .replace("const { classify } = require('./research/classify.js');", `const { classify } = require(${JSON.stringify(path.join(__dirname, '../research/classify.js'))});`)
   .replace(/main\(\)\.catch\(e => \{[\s\S]*?\}\);\s*$/, `
-    herdrAgentGet = async () => ({agent:'codex',display_agent:'agent · working',name:'worker',title:'HTRG-1 test',pane_id:'w1:p1',cwd:'/tmp',agent_status:globalThis.agentStatus || 'blocked',agent_session:globalThis.session || null,state_change_seq:globalThis.seq});
+    herdrAgentGet = async () => ({agent:globalThis.agent || 'codex',display_agent:'agent · working',name:'worker',title:'HTRG-1 test',pane_id:'w1:p1',cwd:'/tmp',agent_status:globalThis.agentStatus || 'blocked',agent_session:globalThis.session || null,state_change_seq:globalThis.seq});
     herdrAgentRead = async () => {if (globalThis.failRead) throw new Error('offline'); globalThis.reads++; if (globalThis.failOnRead === globalThis.reads) throw new Error('offline'); return globalThis.changeOnRead === globalThis.reads ? globalThis.changedFixture : globalThis.fixture};
     tgSendMessage = async (text) => {globalThis.sent = text; globalThis.sendCount++; if (globalThis.failSend) return null; return {message_id:1}};
     tgAnswerCallback = async () => {};
@@ -76,7 +76,12 @@ vm.runInNewContext(source, ctx);
   const stable = Object.keys(JSON.parse(fs.readFileSync(path.join(root, 'state.json'))).pending)[0];
   ctx.fixture = fixture.replace('OpenAI Codex', 'OpenAI Codex ');
   await ctx.api.executeCallback({id:'tap4',from:{id:123},message:{chat:{id:123},message_id:4},data:`app:${stable}`}, 'approve');
-  assert.equal(ctx.keyCount, 3, 'irrelevant banner change does not invalidate request');
+  assert.equal(ctx.keyCount, 2, 'a changed displayed viewport invalidates the old card');
+  await ctx.api.handleBlocked('w1:p1');
+  const replacement = Object.keys(JSON.parse(fs.readFileSync(path.join(root, 'state.json'))).pending)[0];
+  assert(replacement, 'the changed viewport receives a replacement card without a new sequence');
+  await ctx.api.executeCallback({id:'tap4-retry',from:{id:123},message:{chat:{id:123},message_id:4},data:`app:${replacement}`}, 'approve');
+  assert.equal(ctx.keyCount, 3, 'the replacement card remains usable');
   const pending = () => Object.keys(JSON.parse(fs.readFileSync(path.join(root, 'state.json'))).pending)[0];
   const tap = (id, prefix) => ctx.api.handleCallbackQuery({id:'tap-route',from:{id:123},message:{chat:{id:123},message_id:5},data:`${prefix}:${id}`});
   ctx.fixture = fixture; ctx.seq++;
@@ -181,5 +186,32 @@ vm.runInNewContext(source, ctx);
     await tap(pending(), action);
     assert.equal(ctx.keyCount, beforeTruncated, `${action}: a truncated request cannot send a key`);
   }
+  const multiline = "Would you like to run the following command?\n\n$ cat > /tmp/review-first.txt <<'EOF'\nBash command\nEOF\n\n› 1. Yes\n  2. No";
+  for (const action of ['app', 'den']) {
+    ctx.seq++; ctx.fixture = multiline;
+    await ctx.api.handleBlocked('w1:p1');
+    const multilineId = pending(), before = ctx.keyCount;
+    ctx.fixture = multiline.replace('/tmp/review-first.txt', '/tmp/review-different.txt');
+    await tap(multilineId, action);
+    assert.equal(ctx.keyCount, before, `${action}: changing text before a literal marker sends no key`);
+  }
+  ctx.seq++; ctx.fixture = multiline;
+  await ctx.api.handleBlocked('w1:p1');
+  assert.match(ctx.sent, /cat &gt; \/tmp\/review-first\.txt/, 'the beginning of a multiline command is visible');
+  const beforeMultiline = ctx.keyCount;
+  await tap(pending(), 'app');
+  assert.equal(ctx.keyCount, beforeMultiline + 1, 'an unchanged multiline request is usable');
+  ctx.seq++; ctx.fixture = "$ cat > /tmp/review-first.txt <<'EOF'\nBash command\nEOF\nProceed?\n❯ Yes\n  No";
+  await ctx.api.handleBlocked('w1:p1');
+  const oneMarkerId = pending(), beforeOneMarker = ctx.keyCount;
+  assert.match(ctx.sent, /cat &gt; \/tmp\/review-first\.txt/, 'a literal marker alone cannot hide a command');
+  ctx.fixture = ctx.fixture.replace('review-first.txt', 'review-different.txt');
+  await tap(oneMarkerId, 'app');
+  assert.equal(ctx.keyCount, beforeOneMarker, 'a single literal marker cannot hide a changed command');
+  ctx.seq++; ctx.agent = 'claude'; ctx.fixture = claude;
+  await ctx.api.handleBlocked('w1:p1');
+  assert.match(ctx.sent, /claude/i, 'synthetic Claude flow identifies the agent');
+  assert.match(ctx.sent, /printf hello/, 'synthetic Claude flow shows its command');
+  assert.match(ctx.sent, /HTRG-1/, 'synthetic Claude flow identifies the task');
   console.log('captured approval card and reconstructed question passed');
 })().catch(e => { console.error(e); process.exitCode = 1; });
