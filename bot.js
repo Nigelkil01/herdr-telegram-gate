@@ -424,7 +424,17 @@ function extractApprovalRegion(paneText, agent) {
 
 function requestScreen(text) {
   const markers = [...text.matchAll(/^[ \t]*(?:Would you like to run the following command\?|Bash command)[ \t]*$/gm)];
-  return markers.length ? text.slice(markers[markers.length - 1].index).trim() : text.trim();
+  if (markers.length) return text.slice(markers[markers.length - 1].index).trim();
+  const questions = [...text.matchAll(/^[ \t]*[^\n?]{1,500}\?[ \t]*$/gm)];
+  return questions.length ? text.slice(questions[questions.length - 1].index).trim() : text.trim();
+}
+
+async function requestStillMatches(record) {
+  try {
+    const text = await herdrAgentRead(record.pane_id, 25);
+    return !!record.screen_hash && crypto.createHash('sha256')
+      .update(requestScreen(extractApprovalRegion(text, record.agent))).digest('hex') === record.screen_hash;
+  } catch (_) { return false; }
 }
 
 /**
@@ -665,7 +675,7 @@ function approvalMessage(record, status = 'pending') {
 
   const rawCmd = record.screen || (record.argv ? record.argv.join(' ') : '(no command extracted; inspect the pane)');
   const safeCmd = redactSecrets(rawCmd);
-  const cmd = escapeHtml(safeCmd.length > 2200 ? '[Screen truncated; inspect pane]\n' + safeCmd.slice(-2200) : safeCmd);
+  const cmd = escapeHtml(safeCmd.length > 2200 ? '[Screen truncated; inspect pane]\n' + truncateMiddle(safeCmd, 2200) : safeCmd);
   const target = record.target_realpath ? escapeHtml(redactSecrets(record.target_realpath)) : null;
   const blast = blastRadius(record.target_realpath, record.rule);
   const reason = escapeHtml(redactSecrets(record.classify_reason || record.reason || ''));
@@ -758,7 +768,9 @@ async function handleBlocked(paneId) {
     action_hash: hash,
     agent: agentName,
     task_id: taskId,
-    screen: requestScreen(region),
+    // Redact the entire viewport before selecting any excerpt; otherwise an
+    // excerpt could begin inside a private-key block and expose its body.
+    screen: requestScreen(redactSecrets(region)),
     screen_hash: region ? crypto.createHash('sha256').update(requestScreen(region)).digest('hex') : null,
     pane_id: paneId,
     agent_session: agent.agent_session || null,
@@ -811,6 +823,11 @@ async function handleBlocked(paneId) {
           return;
         }
       }
+      if (!await requestStillMatches(record)) {
+        delete lastSeq[paneId];
+        audit('auto_skipped', 'system', record, { reason: 'screen_changed_or_unreadable' });
+        return;
+      }
       await herdrAgentSendKeys(paneId, 'Enter');
       audit('auto_approved', 'system', record, { reason: `tier${result.tier} auto (shadow off)` });
       removePending(record.id);
@@ -826,7 +843,7 @@ async function handleBlocked(paneId) {
   const rawCmd = result.argv ? result.argv.join(' ') : '(no command extracted)';
   audit('escalated', 'system', record, {
     displayed: {
-      cmd: redactSecrets(truncateMiddle(rawCmd, 120)),
+      cmd: truncateMiddle(redactSecrets(rawCmd), 120),
       target: record.target_realpath ? redactSecrets(record.target_realpath) : null,
       blast: blastRadius(record.target_realpath, record.rule),
     },
@@ -840,8 +857,11 @@ async function handleBlocked(paneId) {
       { text: '❌ Deny',    callback_data: `den:${id}` },
     ]],
   };
-  const msg = await tgSendMessage(text, { reply_markup: keyboard });
+  let msg;
+  try { msg = await tgSendMessage(text, { reply_markup: keyboard }); }
+  catch (e) { log(`handleBlocked(${paneId}): send failed: ${e.message}`); }
   if (!msg) {
+    delete lastSeq[paneId]; // Retry delivery on the next poll, even if the sequence is unchanged.
     log(`handleBlocked(${paneId}): failed to send Telegram message`);
   }
 
@@ -923,6 +943,16 @@ async function executeCallback(cb, action) {
     //   Step 6: execute send-keys
     const chatId = cb.message?.chat?.id;
     const messageId = cb.message?.message_id;
+    const stale = async (reason) => {
+      delete lastSeq[rec.pane_id];
+      rec.status = 'stale';
+      saveState();
+      audit('toctou_blocked', cb.from.id, { ...rec, reason });
+      try { await tgAnswerCallback(cb.id, '🛑 Request stale; checking again'); } catch (_) {}
+      try {
+        if (chatId) await tgEditMessage(chatId, messageId, '🛑 <b>Stale</b>\n\nRequest changed or could not be verified. A new check will follow.');
+      } catch (_) {}
+    };
 
     // Step 1: re-get agent info
     let agentInfo;
@@ -930,10 +960,7 @@ async function executeCallback(cb, action) {
       agentInfo = await herdrAgentGet(rec.pane_id);
     } catch (e) {
       log(`revalidate(${rec.pane_id}): agent get failed: ${e.message}`);
-      unconsumePending(rec.id); // transient — let the owner retry
-      await tgAnswerCallback(cb.id, '🛑 Cannot verify agent state');
-      audit('toctou_blocked', cb.from.id, { ...rec, reason: 'agent_get_failed' });
-      if (chatId) await tgEditMessage(chatId, messageId, `🛑 <b>Aborted</b>\n\nCannot re-verify agent state.`);
+      await stale('agent_get_failed');
       return;
     }
 
@@ -951,10 +978,7 @@ async function executeCallback(cb, action) {
     const storedSession = JSON.stringify(rec.agent_session || {});
     if (currentSession !== storedSession || agentInfo.agent !== rec.agent ||
         rec.state_change_seq == null || agentInfo.state_change_seq !== rec.state_change_seq) {
-      delete lastSeq[rec.pane_id];
-      await tgAnswerCallback(cb.id, '🛑 Agent session changed');
-      audit('toctou_blocked', cb.from.id, { ...rec, reason: 'session_changed' });
-      if (chatId) await tgEditMessage(chatId, messageId, `🛑 <b>Aborted</b>\n\nAgent session identity changed since request.`);
+      await stale('session_changed');
       return;
     }
 
@@ -964,23 +988,23 @@ async function executeCallback(cb, action) {
       const newText = await herdrAgentRead(rec.pane_id, 25);
       const newRegion = extractApprovalRegion(newText, rec.agent);
       if (!rec.screen_hash || crypto.createHash('sha256').update(requestScreen(newRegion)).digest('hex') !== rec.screen_hash) {
-        delete lastSeq[rec.pane_id];
-        await tgAnswerCallback(cb.id, '🛑 Request changed or cannot be verified');
-        audit('toctou_blocked', cb.from.id, { ...rec, reason: 'screen_changed_or_missing' });
+        await stale('screen_changed_or_missing');
         return;
       }
       if (action === 'deny') {
+        if (!await requestStillMatches(rec)) { await stale('final_screen_changed_or_unreadable'); return; }
         try {
           await herdrAgentSendKeys(rec.pane_id, 'esc');
-          await tgAnswerCallback(cb.id, '🚫 Denied');
-          audit('denied', cb.from.id, rec, { executed: { keys: 'esc', pane_id: rec.pane_id } });
-          removePending(rec.id);
-          await tgEditMessage(chatId, messageId, approvalMessage(rec, 'denied'));
         } catch (e) {
           log(`executeCallback deny error: ${e.message}`);
           await tgAnswerCallback(cb.id, `❌ Error: ${e.message}`);
           audit('exec_error', cb.from.id, rec);
+          return;
         }
+        audit('denied', cb.from.id, rec, { executed: { keys: 'esc', pane_id: rec.pane_id } });
+        removePending(rec.id);
+        try { await tgAnswerCallback(cb.id, '🚫 Denied'); } catch (_) {}
+        try { if (chatId) await tgEditMessage(chatId, messageId, approvalMessage(rec, 'denied')); } catch (_) {}
         return;
       }
       const rawNew = classify(newRegion, rec.agent, { cwd: rec.cwd, workspaceRoot: WORKSPACE_ROOT });
@@ -988,10 +1012,7 @@ async function executeCallback(cb, action) {
       newResult = applyPolicyRules(newResult, newResult.argv, rec.cwd);
     } catch (e) {
       log(`revalidate(${rec.pane_id}): re-classify failed: ${e.message}`);
-      unconsumePending(rec.id); // transient — let the owner retry
-      await tgAnswerCallback(cb.id, '🛑 Cannot re-verify command');
-      audit('toctou_blocked', cb.from.id, { ...rec, reason: 'reclassify_failed' });
-      if (chatId) await tgEditMessage(chatId, messageId, `🛑 <b>Aborted</b>\n\nCannot re-verify command.`);
+      await stale('reclassify_failed');
       return;
     }
 
@@ -1023,17 +1044,19 @@ async function executeCallback(cb, action) {
     }
 
     // Step 6: all checks passed — execute
+    if (!await requestStillMatches(rec)) { await stale('final_screen_changed_or_unreadable'); return; }
     try {
       await herdrAgentSendKeys(rec.pane_id, 'Enter');
-      await tgAnswerCallback(cb.id, '✅ Approved');
-      audit('approved', cb.from.id, { ...rec, reason: 'executed' }, { executed: { keys: 'Enter', pane_id: rec.pane_id, target_verified: rec.target_realpath } });
-      removePending(rec.id);
-      if (chatId) await tgEditMessage(chatId, messageId, approvalMessage(rec, 'approved'));
     } catch (e) {
       log(`executeCallback approve error: ${e.message}`);
       await tgAnswerCallback(cb.id, `❌ Error: ${e.message}`);
       audit('exec_error', cb.from.id, rec);
+      return;
     }
+    audit('approved', cb.from.id, { ...rec, reason: 'executed' }, { executed: { keys: 'Enter', pane_id: rec.pane_id, target_verified: rec.target_realpath } });
+    removePending(rec.id);
+    try { await tgAnswerCallback(cb.id, '✅ Approved'); } catch (_) {}
+    try { if (chatId) await tgEditMessage(chatId, messageId, approvalMessage(rec, 'approved')); } catch (_) {}
   } finally {
     if (getPending(rec.id)?.consumed) removePending(rec.id);
   }
@@ -1359,7 +1382,7 @@ async function cmdPending() {
   }
   const lines = ['⏳ <b>Pending Approvals</b>\n'];
   for (const r of pending) {
-    const cmd = redactSecrets(truncateMiddle(r.argv ? r.argv.join(' ') : '?', 120));
+    const cmd = truncateMiddle(redactSecrets(r.argv ? r.argv.join(' ') : '?'), 120);
     const remaining = Math.max(0, Math.round((new Date(r.expires_at) - new Date()) / 1000));
     lines.push(`🔴 <b>${escapeHtml(r.agent)}</b> (<code>${r.pane_id}</code>)\n   <code>${escapeHtml(cmd)}</code>\n   Tier ${r.tier} · ${remaining}s left`);
   }

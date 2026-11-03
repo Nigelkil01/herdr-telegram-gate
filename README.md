@@ -75,6 +75,8 @@ The bot treats everything an agent shows it as untrusted. Concretely:
 
 - **Fail-closed** — parse failure, ambiguous commands, unknown verbs, symlinked paths, or any internal error → Tier 2 (ask the human). The default in `policy.json` is hardwired to escalate.
 - **TOCTOU revalidation** — between you tapping Approve and the bot pressing Enter, the pane is re-read and re-checked in 6 steps: agent still blocked, same session, same argv hash, same canonical target path. Anything changed → refuse.
+
+  Immediately before sending Enter or Escape, the bot reads the request again and refuses if it changed or cannot be read. Herdr does not offer an atomic read-and-press operation, so the pane could still change in the small interval between that last read and the keypress. A stale request is checked again and escalated; shadow mode remains recommended.
 - **Anti-replay** — every approval has a random opaque ID (SHA-256 action hash recorded for audit tracking). Every callback re-verifies `from.id`, chat ID, pending ID, and expiry, then consumes the pending atomically exactly once. The callback carries only the opaque pending ID — the server looks up what to approve; nothing executable travels in callback data.
 - **Redaction** — tokens, API keys, `Bearer` strings, and private keys are scrubbed from everything the bot **displays on Telegram** (approval cards, `/pending`, status). Note: `audit.log` and the console retain raw argv by design — `audit.log` is a sensitive internal log, don't share it.
 - **Owner whitelist** — messages from any other Telegram user are ignored and logged.
