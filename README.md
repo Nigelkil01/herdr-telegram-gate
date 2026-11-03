@@ -130,6 +130,8 @@ Expected in shadow mode — extraction is best-effort and anything unparseable s
 **I tapped Approve and it said "stale / changed".**
 That's the TOCTOU revalidation working: the pane changed between the card being sent and your tap. The bot refused rather than approve something you didn't see. The visible screen must still match the screen on the card. Ask the agent again or check what it's doing now.
 
+If a card says the screen was truncated, neither button sends a key. Inspect the pane and handle the request there; a shortened card cannot safely represent the complete request.
+
 **I restarted the bot and got duplicate cards.**
 On restart the bot reconciles `state.json` against live agent state. Pending approvals for panes that remain blocked are replaced with new cards. Old buttons no longer work. Consumed, expired, and no-longer-blocked entries are removed from state.
 

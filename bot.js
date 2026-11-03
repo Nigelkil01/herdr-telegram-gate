@@ -425,8 +425,7 @@ function extractApprovalRegion(paneText, agent) {
 function requestScreen(text) {
   const markers = [...text.matchAll(/^[ \t]*(?:Would you like to run the following command\?|Bash command)[ \t]*$/gm)];
   if (markers.length) return text.slice(markers[markers.length - 1].index).trim();
-  const questions = [...text.matchAll(/^[ \t]*[^\n?]{1,500}\?[ \t]*$/gm)];
-  return questions.length ? text.slice(questions[questions.length - 1].index).trim() : text.trim();
+  return text.trim();
 }
 
 async function requestStillMatches(record) {
@@ -944,15 +943,23 @@ async function executeCallback(cb, action) {
     const chatId = cb.message?.chat?.id;
     const messageId = cb.message?.message_id;
     const stale = async (reason) => {
-      delete lastSeq[rec.pane_id];
+      if (reason !== 'screen_truncated') delete lastSeq[rec.pane_id];
       rec.status = 'stale';
       saveState();
       audit('toctou_blocked', cb.from.id, { ...rec, reason });
-      try { await tgAnswerCallback(cb.id, '🛑 Request stale; checking again'); } catch (_) {}
+      const truncated = reason === 'screen_truncated';
+      try { await tgAnswerCallback(cb.id, truncated ? '🛑 Request too long; inspect pane' : '🛑 Request stale; checking again'); } catch (_) {}
       try {
-        if (chatId) await tgEditMessage(chatId, messageId, '🛑 <b>Stale</b>\n\nRequest changed or could not be verified. A new check will follow.');
+        if (chatId) await tgEditMessage(chatId, messageId, truncated
+          ? '🛑 <b>Too long to verify</b>\n\nInspect the pane. No key was sent.'
+          : '🛑 <b>Stale</b>\n\nRequest changed or could not be verified. A new check will follow.');
       } catch (_) {}
     };
+
+    if (rec.screen && rec.screen.length > 2200) {
+      await stale('screen_truncated');
+      return;
+    }
 
     // Step 1: re-get agent info
     let agentInfo;

@@ -159,5 +159,27 @@ vm.runInNewContext(source, ctx);
   ctx.seq++; ctx.fixture = `-----BEGIN PRIVATE KEY-----\nIs this fake key text?\nFAKEKEYBODY\n-----END PRIVATE KEY-----\n${question}`;
   await ctx.api.handleBlocked('w1:p1');
   assert.doesNotMatch(ctx.sent, /FAKEKEYBODY/, 'excerpt selection cannot start inside a fake key');
+  const wrapped = 'Do you want me to delete the backup before\nstarting the migration?\n\n❯ Yes\n  No';
+  for (const action of ['app', 'den']) {
+    ctx.seq++; ctx.fixture = wrapped;
+    await ctx.api.handleBlocked('w1:p1');
+    const wrappedId = pending(), before = ctx.keyCount;
+    ctx.fixture = wrapped.replace('delete the backup', 'preserve the backup');
+    await tap(wrappedId, action);
+    assert.equal(ctx.keyCount, before, `${action}: changing the first line of a wrapped question must send no key`);
+  }
+  ctx.seq++; ctx.fixture = wrapped;
+  await ctx.api.handleBlocked('w1:p1');
+  assert.match(ctx.sent, /Do you want me to delete the backup before\nstarting the migration\?/, 'card shows the entire wrapped question');
+  const beforeWrapped = ctx.keyCount;
+  await tap(pending(), 'app');
+  assert.equal(ctx.keyCount, beforeWrapped + 1, 'unchanged wrapped question can be approved');
+  for (const action of ['app', 'den']) {
+    ctx.seq++; ctx.fixture = 'Earlier output\n'.repeat(300) + wrapped;
+    await ctx.api.handleBlocked('w1:p1');
+    const beforeTruncated = ctx.keyCount;
+    await tap(pending(), action);
+    assert.equal(ctx.keyCount, beforeTruncated, `${action}: a truncated request cannot send a key`);
+  }
   console.log('captured approval card and reconstructed question passed');
 })().catch(e => { console.error(e); process.exitCode = 1; });
