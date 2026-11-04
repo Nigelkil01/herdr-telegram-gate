@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node bot.js",
     "doctor": "node bot.js --doctor",
-    "test": "node research/test_classify.js && node research/fuzz_classify.js && node tests/state.test.js && node tests/visual.test.js && node tests/cards.test.js"
+    "test": "node research/test_classify.js && node research/fuzz_classify.js && node tests/state.test.js && node tests/visual.test.js && node tests/cards.test.js && node tests/capture.test.js"
   },
   "license": "MIT"
 }

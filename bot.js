@@ -40,6 +40,7 @@ const POLICY_FILE = path.join(ROOT, 'policy.json');
 const CONFIG_FILE = path.join(ROOT, 'config.json');
 
 const { classify } = require('./research/classify.js');
+const { redactSecrets } = require('./lib/redact.js');
 
 // ─── config ───────────────────────────────────────────────────────────────
 
@@ -593,15 +594,6 @@ function projectFromCwd(cwd) {
  * Redact common secret patterns before sending to Telegram.
  * Catches: API keys (sk-*), password=/secret= assignments, PEM keys, Bearer tokens.
  */
-function redactSecrets(str) {
-  if (!str) return str;
-  return String(str)
-    .replace(/sk-[a-zA-Z0-9_-]{8,}/g, 'sk-REDACTED')
-    .replace(/(token|password|passwd|secret|api[_-]?key|auth)["'\s]*[:=]\s*["']?[^"'\s\n]{4,}/gi, '$1=REDACTED')
-    .replace(/-----BEGIN ((?:[A-Z0-9]+ )*PRIVATE KEY)-----[\s\S]*?(?:-----END \1-----|$)/g, '-----REDACTED KEY-----')
-    .replace(/Bearer\s+[a-zA-Z0-9._-]{8,}/gi, 'Bearer REDACTED');
-}
-
 /**
  * Truncate in the middle, keeping head and tail.
  * Dangerous content (flags, paths, targets) tends to be at the end.
