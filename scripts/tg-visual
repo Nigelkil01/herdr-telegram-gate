@@ -1,0 +1,58 @@
+#!/usr/bin/env python3
+# Send images to Nigel's Telegram for visual approval, through the herdr-telegram-gate bot.
+# Usage: tg-visual "caption" image.png [more.png ...]
+# Reads TELEGRAM_BOT_TOKEN and TELEGRAM_OWNER_ID from ~/Work/herdr-telegram-gate/.env; never prints them.
+import json, mimetypes, os, sys, urllib.request, uuid
+
+ENV = os.path.expanduser("~/Work/herdr-telegram-gate/.env")
+
+
+def env():
+    out = {}
+    for line in open(ENV):
+        line = line.strip()
+        if "=" in line and not line.startswith("#"):
+            k, v = line.split("=", 1)
+            out[k.strip()] = v.strip().strip("\"'")
+    return out
+
+
+def post(token, method, fields, path):
+    boundary = uuid.uuid4().hex
+    body = b""
+    for k, v in fields.items():
+        body += f"--{boundary}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n".encode()
+    kind = "photo" if method == "sendPhoto" else "document"
+    ctype = mimetypes.guess_type(path)[0] or "application/octet-stream"
+    body += (f"--{boundary}\r\nContent-Disposition: form-data; name=\"{kind}\"; "
+             f"filename=\"{os.path.basename(path)}\"\r\nContent-Type: {ctype}\r\n\r\n").encode()
+    body += open(path, "rb").read() + f"\r\n--{boundary}--\r\n".encode()
+    req = urllib.request.Request(f"https://api.telegram.org/bot{token}/{method}", data=body,
+                                 headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+    try:
+        return json.load(urllib.request.urlopen(req, timeout=60)).get("ok", False)
+    except Exception:
+        return False
+
+
+def main():
+    if len(sys.argv) < 3:
+        sys.exit("usage: tg-visual \"caption\" image [image ...]")
+    caption, files = sys.argv[1], sys.argv[2:]
+    e = env()
+    token, chat = e["TELEGRAM_BOT_TOKEN"], e["TELEGRAM_OWNER_ID"]
+    for i, f in enumerate(files):
+        fields = {"chat_id": chat, "caption": (caption if i == 0 else f"{caption} — {os.path.basename(f)}")[:1024],
+                  "reply_markup": json.dumps({"inline_keyboard": [[
+                      {"text": "Approve", "callback_data": "visual:approve"},
+                      {"text": "Changes", "callback_data": "visual:changes"},
+                  ]]})}
+        # Photos are compressed for quick viewing; very tall or large images go as files at full size.
+        ok = post(token, "sendPhoto", fields, f) or post(token, "sendDocument", fields, f)
+        print(f"{'sent' if ok else 'FAILED'}: {f}")
+        if not ok:
+            sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

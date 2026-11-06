@@ -1,0 +1,48 @@
+#!/usr/bin/env node
+'use strict';
+
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { execFileSync } = require('child_process');
+const { redactSecrets } = require('../lib/redact');
+
+function scrub(screen, hostname = os.hostname()) {
+  let text = redactSecrets(screen)
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[EMAIL]')
+    .replace(/(?:\/home\/[^/\s]+|\/Users\/[^/\s]+|~)(?:\/[^\s"'`]+)?/g, '[HOME_PATH]')
+    .replace(/\b[A-Z]:\\Users\\[^\\\s]+(?:\\[^\s"'`]+)?/gi, '[HOME_PATH]')
+    .replace(/(?<![\w./-])(?:[a-z0-9-]+\.)+[a-z]{2,}(?![\w.-])/gi, '[HOSTNAME]')
+    .replace(/\b(host(?:name)?\s*[:=]\s*)[a-z0-9_-]+/gi, '$1[HOSTNAME]')
+    .replace(/(?<!\w)(?:\+?\d[\d ()-]{6,}\d)(?!\w)/g, value =>
+      value.replace(/\D/g, '').length >= 7 ? '[PHONE]' : value);
+  if (hostname) {
+    const escaped = hostname.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    text = text.replace(new RegExp(`(?<![\\w-])${escaped}(?![\\w-])`, 'gi'), '[HOSTNAME]');
+  }
+  return text.replace(/(?<=@)[a-z0-9-]+/gi, '[HOSTNAME]');
+}
+
+function main(args) {
+  let session = null;
+  if (args[0] === '--session') { session = args[1]; args = args.slice(2); }
+  const pane = args[0];
+  if (args.length !== 1 || !/^w[a-z0-9]+:p[a-z0-9]+$/i.test(pane || '') ||
+      (session !== null && !/^[a-z0-9_-]+$/i.test(session))) {
+    throw new Error('Usage: capture-blocked-pane [--session NAME] PANE_ID');
+  }
+  const herdrArgs = [...(session ? ['--session', session] : []), 'agent', 'read', pane, '--source', 'visible'];
+  const screen = execFileSync('herdr', herdrArgs, { encoding: 'utf8', timeout: 10000, maxBuffer: 4 * 1024 * 1024 });
+  const dir = path.join(os.homedir(), '.herdr-projects/reports/herdr-telegram-gate/1');
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const dest = path.join(dir, `blocked-${pane.replace(':', '-')}-${Date.now()}.txt`);
+  fs.writeFileSync(dest, scrub(screen), { mode: 0o600, flag: 'wx' });
+  process.stdout.write(`${dest}\n`);
+}
+
+if (require.main === module) {
+  try { main(process.argv.slice(2)); }
+  catch (_) { process.stderr.write('Capture failed; check pane, session, and output directory.\n'); process.exitCode = 1; }
+}
+
+module.exports = { scrub };

@@ -7,3 +7,11 @@ state.json
 *.tmp.*
 tmp-test/
 research/live-corpus/
+
+visual-feedback.jsonl
+
+# Local task notes and Python bytecode
+/findings.md
+/progress.md
+/task_plan.md
+__pycache__/

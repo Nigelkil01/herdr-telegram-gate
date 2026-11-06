@@ -75,11 +75,19 @@ The bot treats everything an agent shows it as untrusted. Concretely:
 
 - **Fail-closed** — parse failure, ambiguous commands, unknown verbs, symlinked paths, or any internal error → Tier 2 (ask the human). The default in `policy.json` is hardwired to escalate.
 - **TOCTOU revalidation** — between you tapping Approve and the bot pressing Enter, the pane is re-read and re-checked in 6 steps: agent still blocked, same session, same argv hash, same canonical target path. Anything changed → refuse.
+
+  Immediately before sending Enter or Escape, the bot reads the request again and refuses if it changed or cannot be read. Herdr does not offer an atomic read-and-press operation, so the pane could still change in the small interval between that last read and the keypress. A stale request is checked again and escalated; shadow mode remains recommended.
 - **Anti-replay** — every approval has a random opaque ID (SHA-256 action hash recorded for audit tracking). Every callback re-verifies `from.id`, chat ID, pending ID, and expiry, then consumes the pending atomically exactly once. The callback carries only the opaque pending ID — the server looks up what to approve; nothing executable travels in callback data.
 - **Redaction** — tokens, API keys, `Bearer` strings, and private keys are scrubbed from everything the bot **displays on Telegram** (approval cards, `/pending`, status). Note: `audit.log` and the console retain raw argv by design — `audit.log` is a sensitive internal log, don't share it.
 - **Owner whitelist** — messages from any other Telegram user are ignored and logged.
 
 Shadow mode is the ultimate safety net: until you turn it off, the bot can approve *nothing* on its own.
+
+## Visual feedback
+
+The companion `scripts/tg-visual` sends images with **Approve** and **Changes** buttons. The bot records each choice in `visual-feedback.jsonl` in its working directory, including the image caption, message ID and time. On **Changes**, reply to the bot's prompt with one line; that reply is recorded with the same message ID. Visual buttons never send keys to an agent pane. Only the configured Telegram owner can submit feedback. Treat the log as private because captions and replies may contain project details.
+
+After deploying the bot code, the coordinator should restart `herdr-telegram-gate.service`, then install the updated sender at `~/.agents/bin/tg-visual`. Until then, the installed sender and running bot keep their existing behavior.
 
 ## policy.json
 
@@ -117,13 +125,15 @@ Check, in order: (a) `TELEGRAM_OWNER_ID` matches your numeric ID exactly — mes
 Confirm the bot sees herdr: `/status` should list your agents. If it's empty, check `HERDR_SOCKET_PATH` and that the herdr server is running. Also check `bot.log` for waiter retry loops.
 
 **The card says the command couldn't be extracted.**
-Expected in shadow mode — extraction is best-effort and anything unparseable simply escalates (fail-closed). The card shows what it could determine; you approve based on the pane state. If extraction fails *consistently* for one agent's prompt style, that's a parser gap — file an issue with a (redacted) pane sample.
+Expected in shadow mode — extraction is best-effort and anything unparseable simply escalates (fail-closed). The card shows the visible approval screen when available. If it is truncated or unclear, inspect the pane before deciding. If extraction fails *consistently* for one agent's prompt style, that's a parser gap — file an issue with a (redacted) pane sample.
 
 **I tapped Approve and it said "stale / changed".**
-That's the TOCTOU revalidation working: the pane changed between the card being sent and your tap. The bot refused rather than approve something you didn't see. Ask the agent again or check what it's doing now.
+That's the TOCTOU revalidation working: the pane changed between the card being sent and your tap. The bot refused rather than approve something you didn't see. The visible screen must still match the screen on the card. Ask the agent again or check what it's doing now.
+
+The card includes the full captured viewport because prompt-like text can occur inside a command. Any viewport change, including an unrelated banner change, makes the old card stale and triggers a new check. If a card says the screen was truncated, neither button sends a key. Inspect the pane and handle the request there; a shortened card cannot safely represent the complete request.
 
 **I restarted the bot and got duplicate cards.**
-On restart the bot reconciles `state.json` against live agent state. Pending approvals that are still valid are re-sent (new card, new ID); the old card's buttons remain live until its 5-minute TTL expires, but acting on either is safe — one-time consume + TOCTOU revalidation means the second tap can't double-execute.
+On restart the bot reconciles `state.json` against live agent state. Pending approvals for panes that remain blocked are replaced with new cards. Old buttons no longer work. Consumed, expired, and no-longer-blocked entries are removed from state.
 
 **Does it need a webhook / public URL?**
 No. It uses Telegram long polling outbound-only — works behind NAT with no open ports.
